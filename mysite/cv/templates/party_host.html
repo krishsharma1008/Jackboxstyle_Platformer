@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Party {{ room.code }} - Draw Platformer</title>
+    <link href="/static/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/party.css" rel="stylesheet">
+</head>
+<body class="party-screen">
+    <main class="party-shell">
+        <section class="party-hero">
+            <div>
+                <div class="party-kicker">Host Screen</div>
+                <h1 class="party-title">Draw Platformer Party</h1>
+                <p class="party-copy">Put this on the big screen. Friends join from their phones, then everyone races through the same hand-drawn platformer map together.</p>
+                <div class="room-code">{{ room.code }}</div>
+                <span class="join-link">{{ join_url }}</span>
+                <div class="party-status-bar">
+                    <span class="party-pill">Room {{ room.code }}</span>
+                    <span class="party-pill"><span id="player-count">{{ players|length }}</span> joined</span>
+                    <span class="party-pill"><span id="map-count">{{ submissions|length }}</span> maps added</span>
+                    <span class="party-pill">Current: <span id="current-map-label">{{ room.current_map.title|default:"First saved map" }}</span></span>
+                </div>
+                <form class="map-picker party-glass" method="post" action="{% url 'party_choose_map' room.code %}">
+                    {% csrf_token %}
+                    <label for="host-map-select">Choose Map</label>
+                    <div class="map-picker-row">
+                        <select id="host-map-select" name="game_map_id" required>
+                            {% for map_option in available_maps %}
+                                <option value="{{ map_option.id }}" {% if room.current_map_id == map_option.id %}selected{% endif %}>{{ map_option.label }}</option>
+                            {% empty %}
+                                <option value="">No maps available</option>
+                            {% endfor %}
+                        </select>
+                        <button class="party-button primary" type="submit" {% if not available_maps %}disabled{% endif %}>Use Map</button>
+                    </div>
+                    <p class="party-microcopy">Submitted maps appear first. Saved maps are available as backups.</p>
+                </form>
+                <div class="party-actions">
+                    <a class="party-button success" href="{% url 'party_play' room.code %}">Start Party</a>
+                    <a class="party-button secondary" href="/">Back Home</a>
+                </div>
+            </div>
+            <aside class="party-glass party-card">
+                <div class="qr-frame">
+                    <img src="{{ qr_data_uri }}" alt="QR code for joining room {{ room.code }}">
+                </div>
+                <p class="party-microcopy">Scan to use a phone as a controller.</p>
+                <h2>Players</h2>
+                <div id="players" class="player-list">
+                    {% for player in players %}
+                        <div class="player-card">
+                            <span class="swatch" style="background: {{ player.color }}"></span>
+                            <strong>{{ player.name }}</strong>
+                            <span class="connection-pill {% if player.map_submissions.count %}connected{% else %}waiting{% endif %}">{% if player.map_submissions.count %}map ready{% else %}needs map{% endif %}</span>
+                            <span class="connection-pill {% if player.is_connected %}connected{% else %}waiting{% endif %}">{% if player.is_connected %}connected{% else %}waiting{% endif %}</span>
+                        </div>
+                    {% empty %}
+                        <p id="empty-state" class="empty-state">No players yet.</p>
+                    {% endfor %}
+                </div>
+                <h2>Map Queue</h2>
+                <div id="map-queue" class="submitted-maps">
+                    {% for submission in submissions %}
+                        <p><strong>{{ submission.player.name }}:</strong> {{ submission.game_map.title }}</p>
+                    {% empty %}
+                        <p>No maps added yet. Players can add one from their phone controller.</p>
+                    {% endfor %}
+                </div>
+            </aside>
+        </section>
+    </main>
+
+    <script>
+        var roomCode = "{{ room.code }}";
+        var socketProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+        var socket = new WebSocket(socketProtocol + "://" + window.location.host + "/ws/party/" + roomCode + "/");
+        var playersEl = document.getElementById("players");
+        var playerCountEl = document.getElementById("player-count");
+        var mapCountEl = document.getElementById("map-count");
+        var mapQueueEl = document.getElementById("map-queue");
+
+        socket.onopen = function () {
+            socket.send(JSON.stringify({ type: "host_join" }));
+        };
+
+        socket.onmessage = function (event) {
+            var message = JSON.parse(event.data);
+            if (message.type !== "room_state") return;
+            playersEl.innerHTML = "";
+            playerCountEl.textContent = message.players.length;
+            mapCountEl.textContent = message.room.submitted_maps || 0;
+            document.getElementById("current-map-label").textContent = message.room.current_map || "First saved map";
+            if (!message.players.length) {
+                playersEl.innerHTML = '<p id="empty-state" class="empty-state">No players yet.</p>';
+                return;
+            }
+            message.players.forEach(function (player) {
+                var card = document.createElement("div");
+                card.className = "player-card";
+                card.innerHTML =
+                    '<span class="swatch" style="background: ' + player.color + '"></span>' +
+                    '<strong>' + player.name + '</strong>' +
+                    '<span class="connection-pill ' + (player.submitted_maps ? 'connected' : 'waiting') + '">' +
+                    (player.submitted_maps ? 'map ready' : 'needs map') + '</span>' +
+                    '<span class="connection-pill ' + (player.is_connected ? 'connected' : 'waiting') + '">' +
+                    (player.is_connected ? 'connected' : 'waiting') + '</span>';
+                playersEl.appendChild(card);
+            });
+
+            mapQueueEl.innerHTML = "";
+            if (!message.submissions || !message.submissions.length) {
+                mapQueueEl.innerHTML = "<p>No maps added yet. Players can add one from their phone controller.</p>";
+                return;
+            }
+            message.submissions.forEach(function (submission) {
+                var row = document.createElement("p");
+                row.innerHTML = "<strong>" + submission.player_name + ":</strong> " + submission.map_title;
+                mapQueueEl.appendChild(row);
+            });
+        };
+    </script>
+</body>
+</html>

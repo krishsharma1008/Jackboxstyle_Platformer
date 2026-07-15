@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <title>{{ player.name }} Controller - Draw Platformer</title>
+    <link href="/static/css/party.css" rel="stylesheet">
+</head>
+<body class="controller-body">
+    <main class="controller">
+        <section class="controller-status">
+            <div>
+                <div class="party-kicker">Room {{ room.code }}</div>
+                <h1 class="controller-name"><span class="swatch" style="background: {{ player.color }}"></span>{{ player.name }}</h1>
+                <p class="controller-help">Hold left or right, tap jump. Keep this screen open.</p>
+            </div>
+            <strong id="connection" class="connection-pill disconnected">connecting</strong>
+        </section>
+        <section class="pad">
+            <button class="control-button jump" aria-label="Jump" data-down="jump_down" data-up="jump_up">
+                <span class="control-icon">↑</span>
+                <span class="control-label">Jump</span>
+            </button>
+            <button class="control-button left" aria-label="Move left" data-down="left_down" data-up="left_up">
+                <span class="control-icon">←</span>
+            </button>
+            <button class="control-button right" aria-label="Move right" data-down="right_down" data-up="right_up">
+                <span class="control-icon">→</span>
+            </button>
+        </section>
+        <button class="control-button reset" id="reset" aria-label="Reset to start">
+            <span class="control-icon">↻</span>
+            <span class="control-label">Reset</span>
+        </button>
+
+        <section class="phone-upload party-glass">
+            <div class="party-kicker">Map Builder</div>
+            <h2>Add My Map</h2>
+            <p class="controller-help">Take a photo of your drawn level or choose one from your phone.</p>
+            {% if messages %}
+                <div class="phone-messages">
+                    {% for message in messages %}
+                        <p class="phone-message {{ message.tags }}">{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+            <form method="post" enctype="multipart/form-data" action="{% url 'party_upload_map' room.code player.id %}">
+                {% csrf_token %}
+                <label for="map-title">Map name</label>
+                <input id="map-title" class="phone-input" type="text" name="title" maxlength="50" placeholder="{{ player.name }}'s map">
+                <label class="file-picker" for="map-photo" id="file-picker-label">
+                    <span class="control-icon">＋</span>
+                    <span id="file-picker-text">Choose Photo</span>
+                </label>
+                <input id="map-photo" class="file-input" type="file" name="file" accept="image/*" capture="environment" required>
+                <button class="party-button success phone-submit" type="submit">Scan And Add Map</button>
+            </form>
+            <div class="submitted-maps">
+                {% for submission in submissions %}
+                    <p><strong>Ready:</strong> {{ submission.game_map.title }}</p>
+                {% empty %}
+                    <p>No map added yet.</p>
+                {% endfor %}
+            </div>
+        </section>
+    </main>
+
+    <script>
+        var roomCode = "{{ room.code }}";
+        var playerId = {{ player.id }};
+        var token = "{{ token }}";
+        var socketProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+        var socket = new WebSocket(socketProtocol + "://" + window.location.host + "/ws/party/" + roomCode + "/");
+        var connection = document.getElementById("connection");
+
+        function send(action) {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: "input", action: action }));
+            }
+        }
+
+        socket.onopen = function () {
+            connection.textContent = "connected";
+            connection.className = "connection-pill connected";
+            socket.send(JSON.stringify({ type: "player_join", player_id: playerId, token: token }));
+        };
+
+        socket.onclose = function () {
+            connection.textContent = "disconnected";
+            connection.className = "connection-pill disconnected";
+        };
+
+        document.querySelectorAll("[data-down]").forEach(function (button) {
+            function down(event) {
+                event.preventDefault();
+                button.classList.add("active");
+                send(button.dataset.down);
+            }
+            function up(event) {
+                event.preventDefault();
+                button.classList.remove("active");
+                send(button.dataset.up);
+            }
+            button.addEventListener("touchstart", down, false);
+            button.addEventListener("touchend", up, false);
+            button.addEventListener("touchcancel", up, false);
+            button.addEventListener("mousedown", down, false);
+            button.addEventListener("mouseup", up, false);
+            button.addEventListener("mouseleave", up, false);
+        });
+
+        document.getElementById("reset").addEventListener("click", function (event) {
+            event.preventDefault();
+            send("reset");
+        });
+
+        document.getElementById("map-photo").addEventListener("change", function () {
+            var text = document.getElementById("file-picker-text");
+            text.textContent = this.files.length ? this.files[0].name : "Choose Photo";
+        });
+    </script>
+</body>
+</html>

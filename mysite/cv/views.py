@@ -1,103 +1,442 @@
-from django.shortcuts import render
-from django.http import HttpResponse, HttpResponseRedirect
-from .forms import UploadFileForm
-from cv.models import GameMap
+import base64
+import io
+import json
+from pathlib import Path
 import sys
+import tempfile
 
-def handle_uploaded_file(f):
-    with open('input.jpg', 'wb+') as destination:
-        for chunk in f.chunks():
-            destination.write(chunk)
-    import os
-    os.system("python ../scan.py --image input.jpg > test_output.txt")
-    os.system("chmod 777 test_output.txt")
+from django.contrib import messages
+from django.db import transaction
+from django.db.models import Sum
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
+from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import render
+from django.urls import reverse
+from django.utils import timezone
+import qrcode
+
+from .forms import UploadFileForm
+from .models import GameMap, PartyMapSubmission, PartyPlayer, PartyRoom, PartyRoundResult
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scan import ScanError, scan_image  # noqa: E402
+
+
+def scan_uploaded_file(uploaded_file):
+    with tempfile.NamedTemporaryFile(suffix=Path(uploaded_file.name).suffix) as temp_file:
+        for chunk in uploaded_file.chunks():
+            temp_file.write(chunk)
+        temp_file.flush()
+        game_map = scan_image(temp_file.name)
+
+    uploaded_file.seek(0)
+    return game_map
+
 
 def upload_file(request):
     if request.method == 'POST':
         form = UploadFileForm(request.POST, request.FILES)
         if form.is_valid():
             input_img = request.FILES['file']
-            handle_uploaded_file(input_img)
             map_title = request.POST['title']
-            with open('test_output.txt', 'r') as f:
-                file_contents = f.read()
-                new_game_map = GameMap.objects.create(title=map_title,map=file_contents,input_img=input_img)
-                new_game_map.save()
-            return HttpResponseRedirect("/play/" + map_title)
+            try:
+                game_map = scan_uploaded_file(input_img)
+            except ScanError as exc:
+                form.add_error('file', str(exc))
+            else:
+                GameMap.objects.create(title=map_title, map=game_map, input_img=input_img)
+                return HttpResponseRedirect('/play/' + map_title)
     else:
         form = UploadFileForm()
     return render(request, 'index.html', {'form': form})
 
+
 def game(request, map_name):
-    game_obj = GameMap.objects.filter(title=map_name)
+    game_obj = GameMap.objects.filter(title=map_name).first()
     if game_obj:
-        game_obj = game_obj[0]
         high_score_string = game_obj.high_score
-        if (game_obj.high_score == 9999): # defualt value
-            high_score_string = "Level never beaten!"
+        if game_obj.high_score == 9999:
+            high_score_string = 'Level never beaten!'
         return render(request, 'play.html', {'map': game_obj, 'high_score': high_score_string})
-    else:
-        return HttpResponse("<h1> Game Page Does Not Exist With Name: </h1>" + map_name)
+    return HttpResponse('<h1> Game Page Does Not Exist With Name: </h1>' + map_name)
+
 
 def update_score(request, map_name):
     if request.method == 'POST':
-        high_score = int(request.POST.get("score"))
-        username = request.POST.get("username")
-        game_obj = GameMap.objects.filter(title=map_name)[0]
-        print >> sys.stderr, (high_score, username)
-        if (game_obj.high_score > high_score):
+        high_score = int(request.POST.get('score'))
+        username = request.POST.get('username')
+        game_obj = GameMap.objects.filter(title=map_name).first()
+        if not game_obj:
+            return HttpResponse('Game map not found', status=404)
+
+        print((high_score, username), file=sys.stderr)
+        if game_obj.high_score > high_score:
             game_obj.high_score = high_score
-            if username == "":
-                username = "Anonymous"
+            if username == '':
+                username = 'Anonymous'
             game_obj.high_score_name = username
             game_obj.save()
-        return HttpResponse("Succesfully Updated High Score")
-    else:
-        return HttpResponse("Requires POST request to update scores")
+        return HttpResponse('Succesfully Updated High Score')
+    return HttpResponse('Requires POST request to update scores')
+
 
 def vote(request):
     for key, value in request.POST.items():
-        print >>sys.stderr, (key, value)
+        print((key, value), file=sys.stderr)
 
     if request.method == 'POST':
-        map_id = request.POST.get("id")
-        is_upvote = request.POST.get("up")
-        is_downvote = request.POST.get("down")
-        prev = request.POST.get("prev") #previously clicked button {none,downvoted,upvoted}
+        map_id = request.POST.get('id')
+        is_upvote = request.POST.get('up')
+        is_downvote = request.POST.get('down')
+        prev = request.POST.get('prev')
 
-        game_obj = GameMap.objects.filter(id=map_id)[0]
-        if prev == "none":
-            if is_upvote == "true":
+        game_obj = GameMap.objects.filter(id=map_id).first()
+        if not game_obj:
+            return HttpResponse('Game map not found', status=404)
+
+        if prev == 'none':
+            if is_upvote == 'true':
                 game_obj.votes = game_obj.votes + 1
             else:
                 game_obj.votes = game_obj.votes - 1
-        elif prev == "downvoted":
-            if is_upvote == "true":
+        elif prev == 'downvoted':
+            if is_upvote == 'true':
                 game_obj.votes = game_obj.votes + 2
             else:
                 game_obj.votes = game_obj.votes + 1
-        elif prev == "upvoted":
-            if is_downvote == "true":
+        elif prev == 'upvoted':
+            if is_downvote == 'true':
                 game_obj.votes = game_obj.votes - 2
             else:
                 game_obj.votes = game_obj.votes - 1
         else:
-            print >> sys.stderr, "Logical Error, prev not matched to any of the cases"
+            print('Logical Error, prev not matched to any of the cases', file=sys.stderr)
 
         game_obj.save()
-        return HttpResponse("Updated Votes")
+        return HttpResponse('Updated Votes')
 
-    else:
-        return HttpResponse("Requires POST request to update votes")
+    return HttpResponse('Requires POST request to update votes')
+
 
 def discover_home(request):
     return discover(request, 1)
 
+
 def discover(request, page):
     page = int(page)
-    start_index = page*10-10
-    end_index = page*10
+    start_index = page * 10 - 10
+    end_index = page * 10
     next_page = page + 1
     recent_maps = GameMap.objects.order_by('-votes')[start_index:end_index]
-    return render(request, 'discover.html', {'recent_maps': recent_maps, 'next_page': next_page})
+    return render(
+        request,
+        'discover.html',
+        {'recent_maps': recent_maps, 'next_page': next_page},
+    )
 
+
+def get_default_party_map():
+    return (
+        GameMap.objects.filter(title='face2').first()
+        or GameMap.objects.order_by('id').first()
+    )
+
+
+def qr_data_uri(value):
+    image = qrcode.make(value)
+    buffer = io.BytesIO()
+    image.save(buffer, format='PNG')
+    encoded = base64.b64encode(buffer.getvalue()).decode('ascii')
+    return f'data:image/png;base64,{encoded}'
+
+
+def get_party_available_maps(room):
+    available_maps = []
+    seen_map_ids = set()
+    submissions = room.map_submissions.select_related('player', 'game_map')
+    for submission in submissions:
+        available_maps.append(
+            {
+                'id': submission.game_map_id,
+                'title': submission.game_map.title,
+                'label': f'{submission.player.name}: {submission.game_map.title}',
+                'source': 'submitted',
+            }
+        )
+        seen_map_ids.add(submission.game_map_id)
+
+    for game_map in GameMap.objects.order_by('-created', 'title'):
+        if game_map.id in seen_map_ids:
+            continue
+        available_maps.append(
+            {
+                'id': game_map.id,
+                'title': game_map.title,
+                'label': f'Saved: {game_map.title}',
+                'source': 'saved',
+            }
+        )
+    return available_maps
+
+
+def get_next_party_map(room):
+    available_maps = get_party_available_maps(room)
+    if not available_maps:
+        return get_default_party_map()
+
+    map_ids = [map_option['id'] for map_option in available_maps]
+    if room.current_map_id not in map_ids:
+        return GameMap.objects.filter(id=map_ids[0]).first()
+
+    current_index = map_ids.index(room.current_map_id)
+    next_map_id = map_ids[(current_index + 1) % len(map_ids)]
+    return GameMap.objects.filter(id=next_map_id).first()
+
+
+def get_party_leaderboard(room):
+    return [
+        {
+            'id': player.id,
+            'name': player.name,
+            'color': player.color,
+            'total_score': player.total_score,
+        }
+        for player in room.players.order_by('-total_score', 'joined_at', 'id')
+    ]
+
+
+def party_new(request):
+    game_map = get_default_party_map()
+    room = PartyRoom.objects.create(current_map=game_map)
+    return redirect('party_host', room_code=room.code)
+
+
+def party_host(request, room_code):
+    room = get_object_or_404(PartyRoom, code=room_code)
+    join_url = request.build_absolute_uri(reverse('party_join', args=[room.code]))
+    return render(
+        request,
+        'party_host.html',
+        {
+            'room': room,
+            'players': room.players.all(),
+            'submissions': room.map_submissions.select_related('player', 'game_map'),
+            'available_maps': get_party_available_maps(room),
+            'join_url': join_url,
+            'qr_data_uri': qr_data_uri(join_url),
+        },
+    )
+
+
+def party_choose_map(request, room_code):
+    room = get_object_or_404(PartyRoom, code=room_code)
+    if request.method != 'POST':
+        return redirect('party_host', room_code=room.code)
+
+    game_map = get_object_or_404(GameMap, id=request.POST.get('game_map_id'))
+    room.current_map = game_map
+    room.save(update_fields=['current_map'])
+    messages.success(request, f'Now playing {game_map.title}.')
+
+    next_url = request.POST.get('next') or reverse('party_host', args=[room.code])
+    return redirect(next_url)
+
+
+def party_next_map(request, room_code):
+    room = get_object_or_404(PartyRoom, code=room_code)
+    if request.method != 'POST':
+        return redirect('party_play', room_code=room.code)
+
+    next_map = get_next_party_map(room)
+    if next_map:
+        room.current_map = next_map
+        room.status = PartyRoom.STATUS_PLAYING
+        room.current_round_started_at = timezone.now()
+        room.save(update_fields=['current_map', 'status', 'current_round_started_at'])
+        messages.success(request, f'Next map: {next_map.title}.')
+    return redirect('party_play', room_code=room.code)
+
+
+def party_save_results(request, room_code):
+    room = get_object_or_404(PartyRoom, code=room_code)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Requires POST'}, status=405)
+    if not room.current_map:
+        return JsonResponse({'error': 'No current map'}, status=400)
+
+    try:
+        payload = json.loads(request.body.decode('utf-8'))
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    round_id = str(payload.get('round_id') or '').strip()[:80]
+    results = payload.get('results')
+    if not round_id or not isinstance(results, list):
+        return JsonResponse({'error': 'Missing round results'}, status=400)
+
+    with transaction.atomic():
+        for result in results:
+            player = room.players.filter(id=result.get('player_id')).first()
+            if not player:
+                continue
+            score = max(0, int(result.get('score') or 0))
+            finish_ms = result.get('finish_ms')
+            if finish_ms is not None:
+                finish_ms = max(0, int(finish_ms))
+            defaults = {
+                'game_map': room.current_map,
+                'finish_ms': finish_ms,
+                'coins': max(0, int(result.get('coins') or 0)),
+                'deaths': max(0, int(result.get('deaths') or 0)),
+                'score': score,
+            }
+            round_result, created = PartyRoundResult.objects.update_or_create(
+                room=room,
+                player=player,
+                round_id=round_id,
+                defaults=defaults,
+            )
+            if created:
+                player.total_score += score
+            else:
+                previous_total = (
+                    PartyRoundResult.objects
+                    .filter(room=room, player=player)
+                    .exclude(id=round_result.id)
+                    .aggregate(models_sum=Sum('score'))['models_sum']
+                    or 0
+                )
+                player.total_score = previous_total + round_result.score
+            player.save(update_fields=['total_score'])
+
+        room.status = PartyRoom.STATUS_RESULTS
+        room.save(update_fields=['status'])
+
+    return JsonResponse({'leaderboard': get_party_leaderboard(room)})
+
+
+def party_join(request, room_code):
+    room = get_object_or_404(PartyRoom, code=room_code)
+    colors = PartyPlayer.DEFAULT_COLORS
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()[:24]
+        color = request.POST.get('color')
+        if not name:
+            name = 'Player'
+        if color not in colors:
+            color = colors[room.players.count() % len(colors)]
+        player = PartyPlayer.objects.create(room=room, name=name, color=color)
+        request.session[f'party_player_{room.code}'] = {
+            'id': player.id,
+            'token': player.session_token,
+        }
+        return redirect('party_controller', room_code=room.code, player_id=player.id)
+
+    return render(request, 'party_join.html', {'room': room, 'colors': colors})
+
+
+def party_controller(request, room_code, player_id):
+    room = get_object_or_404(PartyRoom, code=room_code)
+    session_data = request.session.get(f'party_player_{room.code}')
+    player = get_object_or_404(PartyPlayer, id=player_id, room=room)
+    if not session_data or session_data.get('id') != player.id:
+        return redirect('party_join', room_code=room.code)
+    return render(
+        request,
+        'party_controller.html',
+        {
+            'room': room,
+            'player': player,
+            'token': session_data['token'],
+            'submissions': player.map_submissions.select_related('game_map'),
+        },
+    )
+
+
+def party_upload_map(request, room_code, player_id):
+    if request.method != 'POST':
+        return redirect('party_controller', room_code=room_code, player_id=player_id)
+
+    room = get_object_or_404(PartyRoom, code=room_code)
+    session_data = request.session.get(f'party_player_{room.code}')
+    player = get_object_or_404(PartyPlayer, id=player_id, room=room)
+    if not session_data or session_data.get('id') != player.id:
+        return redirect('party_join', room_code=room.code)
+
+    uploaded_file = request.FILES.get('file')
+    if not uploaded_file:
+        messages.error(request, 'Choose a map photo first.')
+        return redirect('party_controller', room_code=room.code, player_id=player.id)
+
+    title = request.POST.get('title', '').strip()[:50]
+    if not title:
+        title = f'{player.name}-{room.code}-map'
+
+    try:
+        game_map = scan_uploaded_file(uploaded_file)
+    except ScanError as exc:
+        messages.error(request, str(exc))
+        return redirect('party_controller', room_code=room.code, player_id=player.id)
+
+    saved_map = GameMap.objects.create(title=title, map=game_map, input_img=uploaded_file)
+    PartyMapSubmission.objects.create(room=room, player=player, game_map=saved_map)
+    if room.map_submissions.count() == 1:
+        room.current_map = saved_map
+        room.save(update_fields=['current_map'])
+    messages.success(request, f'Added {title} to this party.')
+    return redirect('party_controller', room_code=room.code, player_id=player.id)
+
+
+def party_play(request, room_code):
+    room = get_object_or_404(PartyRoom, code=room_code)
+    if not room.current_map:
+        first_submission = room.map_submissions.select_related('game_map').first()
+        if first_submission:
+            room.current_map = first_submission.game_map
+        else:
+            room.current_map = get_default_party_map()
+    if not room.current_map:
+        room.current_map = get_default_party_map()
+    room.status = PartyRoom.STATUS_PLAYING
+    room.current_round_started_at = timezone.now()
+    room.save(update_fields=['current_map', 'status', 'current_round_started_at'])
+    round_id = f'{room.code}-{room.current_map_id}-{room.current_round_started_at.timestamp():.6f}'
+
+    game_map_data = json.loads(room.current_map.map)
+    players = [
+        {
+            'id': player.id,
+            'name': player.name,
+            'color': player.color,
+            'total_score': player.total_score,
+        }
+        for player in room.players.all()
+    ]
+    if not players:
+        demo = PartyPlayer.objects.create(room=room, name='Host', color='#E53935')
+        players = [
+            {
+                'id': demo.id,
+                'name': demo.name,
+                'color': demo.color,
+                'total_score': demo.total_score,
+            }
+        ]
+
+    return render(
+        request,
+        'party_play.html',
+        {
+            'room': room,
+            'game_map': room.current_map,
+            'game_map_data': game_map_data,
+            'players_data': players,
+            'available_maps': get_party_available_maps(room),
+            'leaderboard': get_party_leaderboard(room),
+            'round_id': round_id,
+        },
+    )

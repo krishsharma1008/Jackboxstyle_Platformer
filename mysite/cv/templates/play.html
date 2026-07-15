@@ -87,11 +87,11 @@
                 </div>
             </div>
             <div class="row">
-                <canvas id="canvas"></canvas>
+                <canvas id="canvas" tabindex="0"></canvas>
             </div>
     </div>
 
-    <script src="/static/js/game_misc.js"></script>
+    <script src="/static/js/game_misc.js?v=2"></script>
 
     <!-- jQuery -->
     <script src="/static/vendor/jquery/jquery.min.js"></script>
@@ -282,8 +282,8 @@ var Clarity = function () {
         can_jump: true
     };
 
-    window.onkeydown = this.keydown.bind(this);
-    window.onkeyup   = this.keyup.bind(this);
+    window.addEventListener('keydown', this.keydown.bind(this), false);
+    window.addEventListener('keyup', this.keyup.bind(this), false);
 };
 
 Clarity.prototype.error = function (message) {
@@ -306,19 +306,43 @@ Clarity.prototype.set_viewport = function (x, y) {
 Clarity.prototype.keydown = function (e) {
 
     var _this = this;
+    var code = e.code || e.key || e.keyCode;
 
-    switch (e.keyCode) {
+    switch (code) {
+    case 'ArrowLeft':
+    case 'KeyA':
+    case 'a':
     case 37:
+    case 65:
         _this.key.left = true;
+        e.preventDefault();
         break;
+    case 'ArrowUp':
+    case 'KeyW':
+    case 'Space':
+    case 'w':
+    case ' ':
     case 38:
+    case 87:
+    case 32:
         _this.key.up = true;
+        e.preventDefault();
         break;
+    case 'ArrowRight':
+    case 'KeyD':
+    case 'd':
     case 39:
+    case 68:
         _this.key.right = true;
+        e.preventDefault();
         break;
+    case 'ArrowDown':
+    case 'KeyS':
+    case 's':
     case 40:
+    case 83:
         _this.key.down = true;
+        e.preventDefault();
         break;
     }
 };
@@ -326,19 +350,43 @@ Clarity.prototype.keydown = function (e) {
 Clarity.prototype.keyup = function (e) {
 
     var _this = this;
+    var code = e.code || e.key || e.keyCode;
 
-    switch (e.keyCode) {
+    switch (code) {
+    case 'ArrowLeft':
+    case 'KeyA':
+    case 'a':
     case 37:
+    case 65:
         _this.key.left = false;
+        e.preventDefault();
         break;
+    case 'ArrowUp':
+    case 'KeyW':
+    case 'Space':
+    case 'w':
+    case ' ':
     case 38:
+    case 87:
+    case 32:
         _this.key.up = false;
+        e.preventDefault();
         break;
+    case 'ArrowRight':
+    case 'KeyD':
+    case 'd':
     case 39:
+    case 68:
         _this.key.right = false;
+        e.preventDefault();
         break;
+    case 'ArrowDown':
+    case 'KeyS':
+    case 's':
     case 40:
+    case 83:
         _this.key.down = false;
+        e.preventDefault();
         break;
     }
 };
@@ -652,7 +700,7 @@ Clarity.prototype.update_player = function () {
     game.player.colour = "#"+(Math.random()*0xFFFFFF<<0).toString(16);*/
 
     if (this.key.left) {
-7
+
         if (this.player.vel.x > -this.current_map.vel_limit.x)
             this.player.vel.x -= this.current_map.movement_speed.left;
 
@@ -739,6 +787,8 @@ window.requestAnimFrame =
 var canvas = document.getElementById('canvas'),
     ctx = canvas.getContext('2d');
 
+canvas.focus();
+
 canvas.width = 44 * Math.round(document.documentElement.clientHeight*(1/60));
 canvas.height = 36 * Math.round(document.documentElement.clientHeight*(1/60));
 
@@ -746,6 +796,8 @@ var game = new Clarity();
     game.set_viewport(canvas.width, canvas.height);
 
     game.load_map(map);
+    window.game = game;
+    window.map = map;
 
     /* Limit the viewport to the confines of the map */
     game.limit_viewport = true;

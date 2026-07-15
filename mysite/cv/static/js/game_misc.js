@@ -1,6 +1,11 @@
         var mainSong = new Audio("/static/underworld.mp3");
-        mainSong.play();
         var isPlaying = true;
+        var playPromise = mainSong.play();
+        if (playPromise !== undefined) {
+            playPromise.catch(function() {
+                isPlaying = false;
+            });
+        }
 
         var un_mute = document.getElementById('un-mute');
 
@@ -17,7 +22,7 @@
             }
         };
 
-        var minutesLabel = document.getElementById("minutes")
+        var minutesLabel = document.getElementById("minutes");
         var secondsLabel = document.getElementById("seconds");
         var totalSecondsLabel = document.getElementById("totalSeconds");
         var totalSeconds = 0;

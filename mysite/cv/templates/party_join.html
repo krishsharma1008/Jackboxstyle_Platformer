@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Join {{ room.code }} - Draw Platformer</title>
+    <link href="/static/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/party.css" rel="stylesheet">
+</head>
+<body class="party-screen join-screen">
+    <main class="party-shell">
+        <section class="join-card party-glass">
+            <div class="party-kicker">Room {{ room.code }}</div>
+            <h1>Join Party</h1>
+            <p class="party-microcopy">Pick a readable name and a color for your player dot.</p>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="name">Your name</label>
+                <input id="name" class="form-control" type="text" name="name" maxlength="24" required autofocus>
+            </div>
+            <label>Pick a color</label>
+            <div class="color-row">
+                {% for color in colors %}
+                    <label class="color-option">
+                        <input type="radio" name="color" value="{{ color }}" {% if forloop.first %}checked{% endif %}>
+                        <span style="background: {{ color }}"></span>
+                    </label>
+                {% endfor %}
+            </div>
+            <button class="party-button success" style="width: 100%;" type="submit">Join Party</button>
+        </form>
+        </section>
+    </main>
+</body>
+</html>

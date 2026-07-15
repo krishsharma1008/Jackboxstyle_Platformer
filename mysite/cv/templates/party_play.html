@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Party {{ room.code }} - {{ game_map.title }}</title>
+    <link href="/static/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/party.css" rel="stylesheet">
+</head>
+<body class="party-play-body">
+    {{ game_map_data|json_script:"party-map-data" }}
+    {{ players_data|json_script:"party-players-data" }}
+    {{ leaderboard|json_script:"party-leaderboard-data" }}
+
+    <header class="party-play-topbar">
+        <h1>{{ game_map.title }} <span class="mini-code">Room {{ room.code }}</span></h1>
+        <div class="party-play-meta">
+            <span class="party-pill">Timer <strong id="timer">0.0</strong>s</span>
+            <span class="party-pill">Phones: /join/{{ room.code }}</span>
+        </div>
+    </header>
+
+    <main class="party-layout">
+        <section class="canvas-stage">
+            <canvas id="party-canvas"></canvas>
+        </section>
+        <aside class="side-panel">
+            <h2>Players</h2>
+            <p class="host-note">Everyone races on this screen. Phone buttons drive each colored dot.</p>
+            <div id="players-panel"></div>
+            <h2>Leaderboard</h2>
+            <div id="leaderboard-panel" class="leaderboard-panel"></div>
+            <form class="map-picker compact" method="post" action="{% url 'party_choose_map' room.code %}">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{% url 'party_play' room.code %}">
+                <label for="play-map-select">Map</label>
+                <select id="play-map-select" name="game_map_id" required>
+                    {% for map_option in available_maps %}
+                        <option value="{{ map_option.id }}" {% if room.current_map_id == map_option.id %}selected{% endif %}>{{ map_option.label }}</option>
+                    {% empty %}
+                        <option value="">No maps available</option>
+                    {% endfor %}
+                </select>
+                <button class="party-button primary" type="submit" {% if not available_maps %}disabled{% endif %}>Switch Map</button>
+            </form>
+            <div class="party-actions">
+                <a class="party-button secondary" href="{% url 'party_host' room.code %}">Lobby</a>
+                <button class="party-button primary" id="restart">Restart</button>
+            </div>
+        </aside>
+    </main>
+
+    <section id="results" class="results">
+        <div class="result-card">
+            <h2>Round Results</h2>
+            <div id="results-list"></div>
+            <div class="party-actions">
+                <button class="party-button success" id="play-again">Play Again</button>
+                <form method="post" action="{% url 'party_next_map' room.code %}">
+                    {% csrf_token %}
+                    <button class="party-button primary" type="submit">Next Map</button>
+                </form>
+                <a class="party-button secondary" href="{% url 'party_host' room.code %}">Back To Lobby</a>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        var roomCode = "{{ room.code }}";
+        var roundIdBase = "{{ round_id }}";
+        var roundAttempt = 1;
+        var currentRoundId = roundIdBase + "-" + roundAttempt;
+        var tileIds = {
+            background: 1,
+            wall: 2,
+            bounce: 5,
+            finish: 8,
+            lava: 9,
+            coin: 12
+        };
+        var tileColors = {
+            1: "#FFFFFF",
+            2: "#000000",
+            5: "#FF79FF",
+            8: "#0000FF",
+            9: "#FD5F00",
+            12: "#008000"
+        };
+        var mapData = JSON.parse(document.getElementById("party-map-data").textContent);
+        var initialPlayers = JSON.parse(document.getElementById("party-players-data").textContent);
+        var leaderboardData = JSON.parse(document.getElementById("party-leaderboard-data").textContent);
+        var canvas = document.getElementById("party-canvas");
+        var ctx = canvas.getContext("2d");
+        var playersPanel = document.getElementById("players-panel");
+        var leaderboardPanel = document.getElementById("leaderboard-panel");
+        var timerEl = document.getElementById("timer");
+        var resultsEl = document.getElementById("results");
+        var resultsList = document.getElementById("results-list");
+        var socketProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+        var socket = new WebSocket(socketProtocol + "://" + window.location.host + "/ws/party/" + roomCode + "/");
+        var players = {};
+        var playerOrder = [];
+        var roundStartedAt = performance.now();
+        var roundComplete = false;
+        var tileSize = 16;
+        var spawn = { x: 2.5, y: 2.5 };
+
+        function resizeCanvas() {
+            var maxWidth = Math.max(528, window.innerWidth - 360);
+            var maxHeight = Math.max(360, window.innerHeight - 100);
+            tileSize = Math.max(10, Math.floor(Math.min(maxWidth / mapData[0].length, maxHeight / mapData.length)));
+            canvas.width = mapData[0].length * tileSize;
+            canvas.height = mapData.length * tileSize;
+        }
+
+        function isSolidTile(x, y) {
+            var row = mapData[y];
+            if (!row) return true;
+            return row[x] === tileIds.wall || row[x] === tileIds.bounce;
+        }
+
+        function tileAt(x, y) {
+            var row = mapData[y];
+            if (!row) return tileIds.wall;
+            return row[x] || tileIds.wall;
+        }
+
+        function addOrUpdatePlayer(player) {
+            if (!players[player.id]) {
+                players[player.id] = {
+                    id: player.id,
+                    name: player.name,
+                    color: player.color,
+                    x: spawn.x,
+                    y: spawn.y,
+                    vx: 0,
+                    vy: 0,
+                    input: { left: false, right: false, jump: false },
+                    onGround: false,
+                    coins: 0,
+                    deaths: 0,
+                    finished: false,
+                    finishMs: null,
+                    collectedCoins: {},
+                    connected: Boolean(player.is_connected),
+                    totalScore: player.total_score || 0
+                };
+                playerOrder.push(player.id);
+            } else {
+                players[player.id].name = player.name;
+                players[player.id].color = player.color;
+                players[player.id].connected = Boolean(player.is_connected);
+                players[player.id].totalScore = player.total_score || players[player.id].totalScore || 0;
+            }
+        }
+
+        function resetPlayer(player) {
+            player.x = spawn.x;
+            player.y = spawn.y;
+            player.vx = 0;
+            player.vy = 0;
+            player.onGround = false;
+        }
+
+        function restartRound() {
+            roundStartedAt = performance.now();
+            roundComplete = false;
+            roundAttempt += 1;
+            currentRoundId = roundIdBase + "-" + roundAttempt;
+            resultsEl.classList.remove("visible");
+            Object.keys(players).forEach(function (id) {
+                var player = players[id];
+                resetPlayer(player);
+                player.input = { left: false, right: false, jump: false };
+                player.coins = 0;
+                player.deaths = 0;
+                player.finished = false;
+                player.finishMs = null;
+                player.collectedCoins = {};
+            });
+        }
+
+        function applyInput(playerId, action) {
+            var player = players[playerId];
+            if (!player) return;
+            if (action === "left_down") player.input.left = true;
+            if (action === "left_up") player.input.left = false;
+            if (action === "right_down") player.input.right = true;
+            if (action === "right_up") player.input.right = false;
+            if (action === "jump_down") player.input.jump = true;
+            if (action === "jump_up") player.input.jump = false;
+            if (action === "reset") {
+                player.deaths += 1;
+                resetPlayer(player);
+            }
+        }
+
+        function collides(player) {
+            var radius = 0.34;
+            var checks = [
+                [player.x - radius, player.y - radius],
+                [player.x + radius, player.y - radius],
+                [player.x - radius, player.y + radius],
+                [player.x + radius, player.y + radius]
+            ];
+            return checks.some(function (point) {
+                return isSolidTile(Math.floor(point[0]), Math.floor(point[1]));
+            });
+        }
+
+        function updatePlayer(player, dt) {
+            if (player.finished || roundComplete) return;
+
+            var accel = 52;
+            var maxSpeed = 10.5;
+            var gravity = 30;
+            var jumpSpeed = 12.5;
+
+            if (player.input.left) player.vx -= accel * dt;
+            if (player.input.right) player.vx += accel * dt;
+            if (player.input.jump && player.onGround) {
+                player.vy = -jumpSpeed;
+                player.onGround = false;
+            }
+
+            player.vx = Math.max(-maxSpeed, Math.min(maxSpeed, player.vx));
+            player.vy = Math.max(-16, Math.min(16, player.vy + gravity * dt));
+
+            player.x += player.vx * dt;
+            if (collides(player)) {
+                var direction = player.vx > 0 ? -1 : 1;
+                while (collides(player)) player.x += direction * 0.02;
+                player.vx = 0;
+            }
+
+            player.y += player.vy * dt;
+            player.onGround = false;
+            if (collides(player)) {
+                var verticalDirection = player.vy > 0 ? -1 : 1;
+                while (collides(player)) player.y += verticalDirection * 0.02;
+                if (player.vy > 0) player.onGround = true;
+                player.vy = 0;
+            }
+
+            player.vx *= player.onGround ? 0.9 : 0.97;
+
+            var currentTileX = Math.floor(player.x);
+            var currentTileY = Math.floor(player.y);
+            var currentTile = tileAt(currentTileX, currentTileY);
+            if (currentTile === tileIds.lava) {
+                player.deaths += 1;
+                resetPlayer(player);
+                return;
+            }
+            if (currentTile === tileIds.coin) {
+                var coinKey = currentTileX + "," + currentTileY;
+                if (!player.collectedCoins[coinKey]) {
+                    player.collectedCoins[coinKey] = true;
+                    player.coins += 1;
+                }
+            }
+            if (currentTile === tileIds.finish) {
+                player.finished = true;
+                player.finishMs = performance.now() - roundStartedAt;
+            }
+        }
+
+        function update(dt) {
+            playerOrder.forEach(function (id) {
+                updatePlayer(players[id], dt);
+            });
+            if (!roundComplete && playerOrder.length && playerOrder.every(function (id) { return players[id].finished; })) {
+                roundComplete = true;
+                showResults();
+            }
+        }
+
+        function drawMap() {
+            for (var y = 0; y < mapData.length; y++) {
+                for (var x = 0; x < mapData[y].length; x++) {
+                    var tile = mapData[y][x];
+                    ctx.fillStyle = tileColors[tile] || "#FFFFFF";
+                    if (tile === tileIds.finish) {
+                        ctx.globalAlpha = 0.65 + Math.sin(performance.now() / 160) * 0.25;
+                    } else if (tile === tileIds.lava) {
+                        ctx.globalAlpha = 0.8 + Math.sin((performance.now() + x * 17) / 120) * 0.2;
+                    }
+                    ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                    ctx.globalAlpha = 1;
+                }
+            }
+        }
+
+        function drawPlayers() {
+            playerOrder.forEach(function (id) {
+                var player = players[id];
+                ctx.fillStyle = player.color;
+                ctx.beginPath();
+                ctx.arc(player.x * tileSize, player.y * tileSize, tileSize * 0.38, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "#111";
+                ctx.stroke();
+
+                ctx.font = "700 " + Math.max(12, Math.floor(tileSize * 0.78)) + "px Arial";
+                ctx.textAlign = "center";
+                ctx.fillStyle = "#111";
+                ctx.fillText(player.name, player.x * tileSize + 1, player.y * tileSize - tileSize * 0.58 + 1);
+                ctx.fillStyle = "#fff";
+                ctx.fillText(player.name, player.x * tileSize, player.y * tileSize - tileSize * 0.58);
+            });
+        }
+
+        function renderPanel() {
+            timerEl.textContent = ((performance.now() - roundStartedAt) / 1000).toFixed(1);
+            playersPanel.innerHTML = "";
+            playerOrder.forEach(function (id) {
+                var player = players[id];
+                var row = document.createElement("div");
+                row.className = "player-row";
+                row.innerHTML =
+                    '<span class="dot" style="background:' + player.color + '"></span>' +
+                    '<strong>' + player.name + '</strong>' +
+                    '<span class="' + (player.finished ? 'finished' : 'waiting') + '">' +
+                    (player.finished ? 'done' : 'playing') + '</span>' +
+                    '<small>Coins ' + player.coins + ' | Deaths ' + player.deaths + ' | Total ' + player.totalScore + '</small>';
+                playersPanel.appendChild(row);
+            });
+        }
+
+        function renderLeaderboard(leaderboard) {
+            leaderboardPanel.innerHTML = "";
+            leaderboard.forEach(function (player, index) {
+                var row = document.createElement("div");
+                row.className = "leaderboard-row";
+                row.innerHTML =
+                    '<strong>' + (index + 1) + '</strong>' +
+                    '<span><span class="dot" style="background:' + player.color + '"></span> ' + player.name + '</span>' +
+                    '<strong>' + player.total_score + '</strong>';
+                leaderboardPanel.appendChild(row);
+
+                if (players[player.id]) {
+                    players[player.id].totalScore = player.total_score;
+                }
+            });
+        }
+
+        function scoreFor(player) {
+            if (!player.finished) return Math.max(0, player.coins * 50 - player.deaths * 100);
+            return Math.max(0, Math.round(1000 - (player.finishMs / 1000) * 10 - player.deaths * 100 + player.coins * 50));
+        }
+
+        function resultRows() {
+            return playerOrder.map(function (id) {
+                var player = players[id];
+                return {
+                    player: player,
+                    score: scoreFor(player)
+                };
+            }).sort(function (a, b) { return b.score - a.score; });
+        }
+
+        function renderResults(rows, saveState) {
+            var leaderboardById = {};
+            leaderboardData.forEach(function (player) {
+                leaderboardById[player.id] = player.total_score;
+            });
+            resultsList.innerHTML = '<div class="result-row"><strong>#</strong><strong>Player</strong><strong>Time</strong><strong>Coins</strong><strong>Deaths</strong><strong>Round</strong><strong>Total</strong></div>';
+            rows.forEach(function (row, index) {
+                var player = row.player;
+                var result = document.createElement("div");
+                result.className = "result-row";
+                result.innerHTML =
+                    '<strong>' + (index + 1) + '</strong>' +
+                    '<span><span class="dot" style="background:' + player.color + '"></span> ' + player.name + '</span>' +
+                    '<span>' + (player.finished ? (player.finishMs / 1000).toFixed(1) + 's' : 'DNF') + '</span>' +
+                    '<span>' + player.coins + '</span>' +
+                    '<span>' + player.deaths + '</span>' +
+                    '<strong>' + row.score + '</strong>' +
+                    '<strong>' + (leaderboardById[player.id] || player.totalScore || 0) + '</strong>';
+                resultsList.appendChild(result);
+            });
+            if (saveState) {
+                var status = document.createElement("p");
+                status.className = "host-note";
+                status.textContent = saveState;
+                resultsList.appendChild(status);
+            }
+        }
+
+        function saveRoundResults(rows) {
+            var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+            return fetch("{% url 'party_save_results' room.code %}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": csrfToken
+                },
+                body: JSON.stringify({
+                    round_id: currentRoundId,
+                    results: rows.map(function (row) {
+                        return {
+                            player_id: row.player.id,
+                            finish_ms: row.player.finishMs,
+                            coins: row.player.coins,
+                            deaths: row.player.deaths,
+                            score: row.score
+                        };
+                    })
+                })
+            }).then(function (response) {
+                if (!response.ok) throw new Error("Could not save results");
+                return response.json();
+            });
+        }
+
+        function showResults() {
+            var rows = playerOrder.map(function (id) {
+                var player = players[id];
+                return {
+                    player: player,
+                    score: scoreFor(player)
+                };
+            }).sort(function (a, b) { return b.score - a.score; });
+
+            renderResults(rows, "Saving scores...");
+            resultsEl.classList.add("visible");
+            launchConfetti();
+            saveRoundResults(rows)
+                .then(function (data) {
+                    leaderboardData = data.leaderboard || leaderboardData;
+                    renderLeaderboard(leaderboardData);
+                    renderResults(rows, "Scores saved. Pick Next Map when everyone is ready.");
+                })
+                .catch(function () {
+                    renderResults(rows, "Scores could not be saved. You can still continue.");
+                });
+        }
+
+        function launchConfetti() {
+            var colors = ["#ff5c7a", "#2d8cff", "#77f06d", "#ffd84d", "#ec5cff", "#ffffff"];
+            for (var i = 0; i < 90; i++) {
+                var piece = document.createElement("span");
+                piece.className = "confetti-piece";
+                piece.style.left = Math.random() * 100 + "vw";
+                piece.style.background = colors[i % colors.length];
+                piece.style.animationDelay = Math.random() * 240 + "ms";
+                piece.style.setProperty("--confetti-x", (Math.random() * 240 - 120) + "px");
+                document.body.appendChild(piece);
+                window.setTimeout(function (node) {
+                    if (node.parentNode) node.parentNode.removeChild(node);
+                }, 1400, piece);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawMap();
+            drawPlayers();
+            renderPanel();
+        }
+
+        var lastFrame = performance.now();
+        function loop(now) {
+            var dt = Math.min(0.033, (now - lastFrame) / 1000);
+            lastFrame = now;
+            update(dt);
+            draw();
+            try {
+                window.partyDebug = {
+                    players: players,
+                    playerOrder: playerOrder,
+                    roundComplete: roundComplete,
+                    spawn: spawn
+                };
+            } catch (error) {}
+            document.body.setAttribute("data-party-debug", JSON.stringify({
+                players: playerOrder.map(function (id) {
+                    var player = players[id];
+                    return {
+                        id: player.id,
+                        name: player.name,
+                        x: Number(player.x.toFixed(3)),
+                        y: Number(player.y.toFixed(3)),
+                        finished: player.finished
+                    };
+                }),
+                roundComplete: roundComplete
+            }));
+            requestAnimationFrame(loop);
+        }
+
+        socket.onopen = function () {
+            socket.send(JSON.stringify({ type: "host_join" }));
+        };
+
+        socket.onmessage = function (event) {
+            var message = JSON.parse(event.data);
+            if (message.type === "room_state") {
+                message.players.forEach(addOrUpdatePlayer);
+            }
+            if (message.type === "player_input") {
+                applyInput(message.player_id, message.action);
+            }
+        };
+
+        initialPlayers.forEach(addOrUpdatePlayer);
+        renderLeaderboard(leaderboardData);
+        resizeCanvas();
+        window.addEventListener("resize", resizeCanvas, false);
+        document.getElementById("restart").addEventListener("click", restartRound, false);
+        document.getElementById("play-again").addEventListener("click", restartRound, false);
+
+        window.addEventListener("keydown", function (event) {
+            var firstPlayer = players[playerOrder[0]];
+            if (!firstPlayer) return;
+            if (event.code === "ArrowLeft" || event.code === "KeyA") { firstPlayer.input.left = true; event.preventDefault(); }
+            if (event.code === "ArrowRight" || event.code === "KeyD") { firstPlayer.input.right = true; event.preventDefault(); }
+            if (event.code === "ArrowUp" || event.code === "KeyW" || event.code === "Space") { firstPlayer.input.jump = true; event.preventDefault(); }
+        }, false);
+        window.addEventListener("keyup", function (event) {
+            var firstPlayer = players[playerOrder[0]];
+            if (!firstPlayer) return;
+            if (event.code === "ArrowLeft" || event.code === "KeyA") { firstPlayer.input.left = false; event.preventDefault(); }
+            if (event.code === "ArrowRight" || event.code === "KeyD") { firstPlayer.input.right = false; event.preventDefault(); }
+            if (event.code === "ArrowUp" || event.code === "KeyW" || event.code === "Space") { firstPlayer.input.jump = false; event.preventDefault(); }
+        }, false);
+
+        requestAnimationFrame(loop);
+    </script>
+</body>
+</html>

@@ -90,6 +90,7 @@ target/
 
 # pyenv
 .python-version
+!.python-version
 
 # celery beat schedule file
 celerybeat-schedule
@@ -114,3 +115,4 @@ ENV/
 # mac settings
 *.DS_Store
 *.jpg
+!mysite/media/pics/*.jpg
