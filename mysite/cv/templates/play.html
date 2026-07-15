@@ -74,7 +74,7 @@
             <h2>{{map.title}}</h2>
             <div class="row">
                 <div class="col-xs-3">
-                    <p>Coins collected: <label id="points" style="font-size: large;">0</label></p>
+                    <p>Bonus coins: <label id="points" style="font-size: large;">0</label></p>
                 </div>
                 <div class="col-xs-3">
                     <p>Time Elapsed: <label style="font-size:large; color: red;" id="totalSeconds">0</label></p>
@@ -218,7 +218,7 @@ var savedMap = {
         change_colour: 'game.player.colour = "#"+(Math.random()*0xFFFFFF<<0).toString(16);',
         /* you could load a new map variable here */
         boing: 'var boing = new Audio("jump.wav");boing.play();',
-        next_level: 'if(map.coin_count >= map.total_coins){ if (totalSeconds < {{map.high_score}}) {var username = prompt("You set a high score of only " + totalSeconds + " seconds! Enter your name to get credit for your highscore: "); sendHighScore(totalSeconds, username);} else { alert("Congrats, you finished in " + totalSeconds + " seconds. Now try to beat the highscore!");} location.reload();} else{alert("You have not finished yet!!! You need " + (map.total_coins - map.coin_count) + " more coins to win!");} this.key.left  = false;this.key.up    = false;this.key.right = false;this.key.down = false;',
+        next_level: 'if (totalSeconds < {{map.high_score}}) {var username = prompt("You set a high score of only " + totalSeconds + " seconds! Enter your name to get credit for your highscore: "); sendHighScore(totalSeconds, username);} else { alert("Congrats, you finished in " + totalSeconds + " seconds with " + map.coin_count + "/" + map.total_coins + " bonus coins. Now try to beat the highscore!");} location.reload(); this.key.left  = false;this.key.up    = false;this.key.right = false;this.key.down = false;',
         death: 'alert("You died!");location.reload();',
         unlock: 'game.current_map.keys[10].solid = 0;game.current_map.keys[10].colour = "#888";',
         add_coin: 'var audio = new Audio("/static/coin.wav");audio.play();map.player.x = (this.player.loc.x) / (this.tile_size);map.player.y = (this.player.loc.y) / (this.tile_size);if(this.current_map.data[Math.round(map.player.y)][Math.round(map.player.x)].id == 12){this.current_map.data[Math.round(map.player.y)][Math.round(map.player.x)] = 1;}if(this.current_map.data[Math.round(map.player.y)-1][Math.round(map.player.x)].id == 12){this.current_map.data[Math.round(map.player.y)-1][Math.round(map.player.x)] = 1;}if(this.current_map.data[Math.round(map.player.y)][Math.round(map.player.x)-1].id == 12){this.current_map.data[Math.round(map.player.y)][Math.round(map.player.x)-1] = 1;}if(this.current_map.data[Math.round(map.player.y)+1][Math.round(map.player.x)].id == 12){this.current_map.data[Math.round(map.player.y)+1][Math.round(map.player.x)] = 1;}if(this.current_map.data[Math.round(map.player.y)][Math.round(map.player.x)+1].id == 12){this.current_map.data[Math.round(map.player.y)][Math.round(map.player.x)+1] = 1;}map.coin_count++;document.getElementById("points").innerHTML = map.coin_count + "/" + map.total_coins;game.load_map(map);'

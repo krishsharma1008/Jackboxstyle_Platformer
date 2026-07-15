@@ -86,6 +86,9 @@ class WebFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data: [[2, 2], [2, 2]]')
+        self.assertContains(response, 'Bonus coins:')
+        self.assertNotContains(response, 'You have not finished yet')
+        self.assertNotContains(response, 'more coins to win')
 
     def test_high_score_only_updates_when_score_is_lower(self):
         game_map = GameMap.objects.create(
@@ -212,6 +215,7 @@ class PartyModeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'party-canvas')
         self.assertContains(response, 'Krish')
+        self.assertContains(response, 'coins are bonus points only')
 
     def test_party_host_can_choose_from_available_maps(self):
         alternate_map = GameMap.objects.create(
