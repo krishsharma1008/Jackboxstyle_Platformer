@@ -381,16 +381,68 @@ def party_join(request, room_code):
             'id': player.id,
             'token': player.session_token,
         }
-        return redirect('party_controller', room_code=room.code, player_id=player.id)
+        return redirect('party_player_lobby', room_code=room.code, player_id=player.id)
 
     return render(request, 'party_join.html', {'room': room, 'colors': colors})
 
 
-def party_controller(request, room_code, player_id):
+def get_session_player_or_redirect(request, room_code, player_id):
     room = get_object_or_404(PartyRoom, code=room_code)
     session_data = request.session.get(f'party_player_{room.code}')
     player = get_object_or_404(PartyPlayer, id=player_id, room=room)
     if not session_data or session_data.get('id') != player.id:
+        return room, player, None
+    return room, player, session_data
+
+
+def party_player_lobby(request, room_code, player_id):
+    room, player, session_data = get_session_player_or_redirect(request, room_code, player_id)
+    if not session_data:
+        return redirect('party_join', room_code=room.code)
+
+    submissions = player.map_submissions.select_related('game_map')
+    active_submission = None
+    requested_submission_id = request.GET.get('submission')
+    if requested_submission_id:
+        active_submission = submissions.filter(id=requested_submission_id).first()
+    if not active_submission:
+        active_submission = submissions.last()
+    active_map_data = json.loads(active_submission.game_map.map) if active_submission else []
+    return render(
+        request,
+        'party_player_lobby.html',
+        {
+            'room': room,
+            'player': player,
+            'colors': PartyPlayer.DEFAULT_COLORS,
+            'submissions': submissions,
+            'active_submission': active_submission,
+            'active_map_data': active_map_data,
+        },
+    )
+
+
+def party_update_player(request, room_code, player_id):
+    room, player, session_data = get_session_player_or_redirect(request, room_code, player_id)
+    if not session_data:
+        return redirect('party_join', room_code=room.code)
+    if request.method != 'POST':
+        return redirect('party_player_lobby', room_code=room.code, player_id=player.id)
+
+    name = request.POST.get('name', '').strip()[:24]
+    color = request.POST.get('color')
+    if name:
+        player.name = name
+    if color in PartyPlayer.DEFAULT_COLORS:
+        player.color = color
+    player.save(update_fields=['name', 'color'])
+    messages.success(request, 'Profile updated.')
+    return redirect('party_player_lobby', room_code=room.code, player_id=player.id)
+
+
+def party_controller(request, room_code, player_id):
+    room, player, session_data = get_session_player_or_redirect(request, room_code, player_id)
+    if not session_data:
         return redirect('party_join', room_code=room.code)
     return render(
         request,
@@ -408,16 +460,16 @@ def party_upload_map(request, room_code, player_id):
     if request.method != 'POST':
         return redirect('party_controller', room_code=room_code, player_id=player_id)
 
-    room = get_object_or_404(PartyRoom, code=room_code)
-    session_data = request.session.get(f'party_player_{room.code}')
-    player = get_object_or_404(PartyPlayer, id=player_id, room=room)
-    if not session_data or session_data.get('id') != player.id:
+    room, player, session_data = get_session_player_or_redirect(request, room_code, player_id)
+    next_view = request.POST.get('next')
+    redirect_name = 'party_player_lobby' if next_view == 'setup' else 'party_controller'
+    if not session_data:
         return redirect('party_join', room_code=room.code)
 
     uploaded_file = request.FILES.get('file')
     if not uploaded_file:
         messages.error(request, 'Choose a map photo first.')
-        return redirect('party_controller', room_code=room.code, player_id=player.id)
+        return redirect(redirect_name, room_code=room.code, player_id=player.id)
 
     title = request.POST.get('title', '').strip()[:50]
     if not title:
@@ -427,7 +479,7 @@ def party_upload_map(request, room_code, player_id):
         game_map = scan_uploaded_file(uploaded_file)
     except ScanError as exc:
         messages.error(request, str(exc))
-        return redirect('party_controller', room_code=room.code, player_id=player.id)
+        return redirect(redirect_name, room_code=room.code, player_id=player.id)
 
     saved_map = GameMap.objects.create(title=title, map=game_map, input_img=uploaded_file)
     PartyMapSubmission.objects.create(room=room, player=player, game_map=saved_map)
@@ -435,7 +487,31 @@ def party_upload_map(request, room_code, player_id):
         room.current_map = saved_map
         room.save(update_fields=['current_map'])
     messages.success(request, f'Added {title} to this party.')
-    return redirect('party_controller', room_code=room.code, player_id=player.id)
+    return redirect(redirect_name, room_code=room.code, player_id=player.id)
+
+
+def party_update_submission_map(request, room_code, player_id, submission_id):
+    room, player, session_data = get_session_player_or_redirect(request, room_code, player_id)
+    if not session_data:
+        return JsonResponse({'error': 'Invalid player session'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Requires POST'}, status=405)
+
+    submission = get_object_or_404(
+        PartyMapSubmission,
+        id=submission_id,
+        room=room,
+        player=player,
+    )
+    try:
+        payload = json.loads(request.body.decode('utf-8'))
+        map_data = validate_party_map_data(payload.get('map'))
+    except (json.JSONDecodeError, ValueError) as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+
+    submission.game_map.map = json.dumps(map_data)
+    submission.game_map.save(update_fields=['map'])
+    return JsonResponse({'ok': True, 'map': map_data})
 
 
 def party_play(request, room_code):

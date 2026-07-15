@@ -357,6 +357,79 @@ body.party-screen::after,
     padding: 0 16px;
 }
 
+.player-lobby-screen {
+    min-height: 100vh;
+}
+
+.player-lobby {
+    display: grid;
+    gap: 18px;
+    margin: 0 auto;
+    max-width: 960px;
+    padding: 18px;
+}
+
+.player-lobby-header {
+    align-items: center;
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.player-lobby-header h1 {
+    align-items: center;
+    display: flex;
+    font-size: clamp(38px, 9vw, 72px);
+    font-weight: 950;
+    gap: 12px;
+    line-height: 1;
+    margin: 8px 0;
+}
+
+.setup-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.setup-card {
+    padding: 18px;
+}
+
+.setup-card h2 {
+    font-size: 26px;
+    font-weight: 950;
+    margin: 6px 0 12px;
+}
+
+.setup-card form {
+    display: grid;
+    gap: 12px;
+}
+
+.setup-card label {
+    color: var(--party-muted);
+    font-size: 13px;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.phone-map-editor {
+    overflow: hidden;
+}
+
+#phone-map-canvas {
+    background: #333;
+    border: 6px solid #050505;
+    border-radius: 8px;
+    display: block;
+    image-rendering: pixelated;
+    margin: 12px auto;
+    max-width: 100%;
+    touch-action: none;
+}
+
 .color-row {
     display: flex;
     flex-wrap: wrap;
@@ -603,12 +676,45 @@ body.party-screen::after,
     margin-top: 14px;
 }
 
-.submitted-maps p {
+.submitted-maps p,
+.submitted-map-row {
     background: rgba(255, 255, 255, 0.07);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     margin: 8px 0 0;
     padding: 10px 12px;
+}
+
+.submitted-map-row {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+}
+
+.submitted-map-row.active {
+    background: rgba(47, 133, 252, 0.22);
+    border-color: rgba(47, 133, 252, 0.55);
+    color: #fff;
+}
+
+.submitted-map-row strong {
+    color: #fff;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.submitted-map-row a,
+.submitted-map-row span {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    color: #fff;
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 950;
+    padding: 8px 12px;
+    text-decoration: none;
+    text-transform: uppercase;
 }
 
 .party-play-body {
@@ -941,6 +1047,11 @@ body.party-screen::after,
 
     .result-row {
         grid-template-columns: 34px 1fr 68px;
+    }
+
+    .player-lobby-header,
+    .setup-grid {
+        grid-template-columns: 1fr;
     }
 }
 

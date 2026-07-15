@@ -33,36 +33,7 @@
             <span class="control-label">Reset</span>
         </button>
 
-        <section class="phone-upload party-glass">
-            <div class="party-kicker">Map Builder</div>
-            <h2>Add My Map</h2>
-            <p class="controller-help">Take a photo of your drawn level or choose one from your phone.</p>
-            {% if messages %}
-                <div class="phone-messages">
-                    {% for message in messages %}
-                        <p class="phone-message {{ message.tags }}">{{ message }}</p>
-                    {% endfor %}
-                </div>
-            {% endif %}
-            <form method="post" enctype="multipart/form-data" action="{% url 'party_upload_map' room.code player.id %}">
-                {% csrf_token %}
-                <label for="map-title">Map name</label>
-                <input id="map-title" class="phone-input" type="text" name="title" maxlength="50" placeholder="{{ player.name }}'s map">
-                <label class="file-picker" for="map-photo" id="file-picker-label">
-                    <span class="control-icon">＋</span>
-                    <span id="file-picker-text">Choose Photo</span>
-                </label>
-                <input id="map-photo" class="file-input" type="file" name="file" accept="image/*" capture="environment" required>
-                <button class="party-button success phone-submit" type="submit">Scan And Add Map</button>
-            </form>
-            <div class="submitted-maps">
-                {% for submission in submissions %}
-                    <p><strong>Ready:</strong> {{ submission.game_map.title }}</p>
-                {% empty %}
-                    <p>No map added yet.</p>
-                {% endfor %}
-            </div>
-        </section>
+        <a class="party-button secondary phone-submit" href="{% url 'party_player_lobby' room.code player.id %}">Setup / Edit Map</a>
     </main>
 
     <script>
@@ -112,11 +83,6 @@
         document.getElementById("reset").addEventListener("click", function (event) {
             event.preventDefault();
             send("reset");
-        });
-
-        document.getElementById("map-photo").addEventListener("change", function () {
-            var text = document.getElementById("file-picker-text");
-            text.textContent = this.files.length ? this.files[0].name : "Choose Photo";
         });
     </script>
 </body>

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ player.name }} Lobby - Draw Platformer</title>
+    <link href="/static/css/party.css" rel="stylesheet">
+</head>
+<body class="party-screen player-lobby-screen">
+    {{ active_map_data|json_script:"player-map-data" }}
+    <main class="player-lobby">
+        <section class="player-lobby-header">
+            <div>
+                <div class="party-kicker">Room {{ room.code }}</div>
+                <h1><span class="swatch" style="background: {{ player.color }}"></span>{{ player.name }}</h1>
+                <p class="party-microcopy">Set yourself up before the host starts. Add a map, fix it if needed, then open your controller.</p>
+            </div>
+            <a class="party-button success" href="{% url 'party_controller' room.code player.id %}">Open Controller</a>
+        </section>
+
+        {% if messages %}
+            <div class="phone-messages">
+                {% for message in messages %}
+                    <p class="phone-message {{ message.tags }}">{{ message }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <section class="setup-grid">
+            <article class="party-glass setup-card">
+                <div class="party-kicker">Profile</div>
+                <h2>Name And Color</h2>
+                <form method="post" action="{% url 'party_update_player' room.code player.id %}">
+                    {% csrf_token %}
+                    <label for="name">Display name</label>
+                    <input id="name" class="phone-input" type="text" name="name" maxlength="24" value="{{ player.name }}" required>
+                    <label>Player color</label>
+                    <div class="color-row">
+                        {% for color in colors %}
+                            <label class="color-option">
+                                <input type="radio" name="color" value="{{ color }}" {% if player.color == color %}checked{% endif %}>
+                                <span style="background: {{ color }}"></span>
+                            </label>
+                        {% endfor %}
+                    </div>
+                    <button class="party-button primary phone-submit" type="submit">Save Profile</button>
+                </form>
+            </article>
+
+            <article class="party-glass setup-card">
+                <div class="party-kicker">Map Builder</div>
+                <h2>Add A Map</h2>
+                <p class="party-microcopy">Take a photo of a drawn map or choose an image from this phone.</p>
+                <form method="post" enctype="multipart/form-data" action="{% url 'party_upload_map' room.code player.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="setup">
+                    <label for="map-title">Map name</label>
+                    <input id="map-title" class="phone-input" type="text" name="title" maxlength="50" placeholder="{{ player.name }}'s map">
+                    <label class="file-picker" for="map-photo">
+                        <span class="control-icon">＋</span>
+                        <span id="file-picker-text">Choose Photo</span>
+                    </label>
+                    <input id="map-photo" class="file-input" type="file" name="file" accept="image/*" capture="environment" required>
+                    <button class="party-button success phone-submit" type="submit">Scan And Add Map</button>
+                </form>
+            </article>
+        </section>
+
+        <section class="party-glass setup-card">
+            <div class="party-kicker">My Maps</div>
+            <h2>Ready Maps</h2>
+            <div class="submitted-maps">
+                {% for submission in submissions %}
+                    <div class="submitted-map-row {% if active_submission and active_submission.id == submission.id %}active{% endif %}">
+                        <strong>{{ submission.game_map.title }}</strong>
+                        {% if active_submission and active_submission.id == submission.id %}
+                            <span>Editing</span>
+                        {% else %}
+                            <a href="{% url 'party_player_lobby' room.code player.id %}?submission={{ submission.id }}">Edit</a>
+                        {% endif %}
+                    </div>
+                {% empty %}
+                    <p>No map added yet.</p>
+                {% endfor %}
+            </div>
+        </section>
+
+        {% if active_submission %}
+            <section class="party-glass setup-card phone-map-editor">
+                <div class="map-editor-header">
+                    <div>
+                        <div class="party-kicker">Repair Map</div>
+                        <h2>{{ active_submission.game_map.title }}</h2>
+                        <p class="party-microcopy">Pick a tile and paint the small grid. Your edits save to your submitted map.</p>
+                    </div>
+                </div>
+                <canvas id="phone-map-canvas"></canvas>
+                <div class="tile-palette" id="tile-palette">
+                    <button class="tile-tool selected" type="button" data-tile="1" style="--tool-color: #FFFFFF"><span>Erase</span></button>
+                    <button class="tile-tool" type="button" data-tile="2" style="--tool-color: #000000"><span>Wall</span></button>
+                    <button class="tile-tool" type="button" data-tile="5" style="--tool-color: #FF79FF"><span>Bounce</span></button>
+                    <button class="tile-tool" type="button" data-tile="8" style="--tool-color: #0000FF"><span>Finish</span></button>
+                    <button class="tile-tool" type="button" data-tile="9" style="--tool-color: #FD5F00"><span>Lava</span></button>
+                    <button class="tile-tool" type="button" data-tile="12" style="--tool-color: #008000"><span>Coin</span></button>
+                </div>
+                <p class="editor-status" id="editor-status">Tap or drag on the grid to edit.</p>
+            </section>
+        {% endif %}
+    </main>
+
+    <script>
+        var photoInput = document.getElementById("map-photo");
+        if (photoInput) {
+            photoInput.addEventListener("change", function () {
+                document.getElementById("file-picker-text").textContent = this.files.length ? this.files[0].name : "Choose Photo";
+            });
+        }
+
+        {% if active_submission %}
+            var mapData = JSON.parse(document.getElementById("player-map-data").textContent);
+            var canvas = document.getElementById("phone-map-canvas");
+            var ctx = canvas.getContext("2d");
+            var selectedTile = 1;
+            var isPainting = false;
+            var saveTimer = null;
+            var tileColors = {
+                1: "#FFFFFF",
+                2: "#000000",
+                5: "#FF79FF",
+                8: "#0000FF",
+                9: "#FD5F00",
+                12: "#008000"
+            };
+            var statusEl = document.getElementById("editor-status");
+
+            function resizeEditor() {
+                var width = Math.min(canvas.parentElement.clientWidth - 4, 704);
+                var tileSize = Math.max(7, Math.floor(width / 44));
+                canvas.width = tileSize * 44;
+                canvas.height = tileSize * 36;
+                drawEditor();
+            }
+
+            function drawEditor() {
+                var tileSize = canvas.width / 44;
+                for (var y = 0; y < mapData.length; y++) {
+                    for (var x = 0; x < mapData[y].length; x++) {
+                        ctx.fillStyle = tileColors[mapData[y][x]] || "#FFFFFF";
+                        ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                    }
+                }
+            }
+
+            function status(text, className) {
+                statusEl.textContent = text;
+                statusEl.className = "editor-status" + (className ? " " + className : "");
+            }
+
+            function pointFromEvent(event) {
+                var rect = canvas.getBoundingClientRect();
+                return {
+                    x: Math.floor(((event.clientX - rect.left) / rect.width) * 44),
+                    y: Math.floor(((event.clientY - rect.top) / rect.height) * 36)
+                };
+            }
+
+            function paint(event) {
+                if (event.preventDefault) event.preventDefault();
+                var point = pointFromEvent(event);
+                if (point.x <= 0 || point.y <= 0 || point.x >= 43 || point.y >= 35) {
+                    status("Border stays locked as wall.", "warning");
+                    return;
+                }
+                if (!mapData[point.y] || mapData[point.y][point.x] === selectedTile) return;
+                mapData[point.y][point.x] = selectedTile;
+                drawEditor();
+                scheduleSave();
+            }
+
+            function scheduleSave() {
+                status("Saving edit...", "saving");
+                if (saveTimer) window.clearTimeout(saveTimer);
+                saveTimer = window.setTimeout(saveMap, 450);
+            }
+
+            function saveMap() {
+                fetch("{% url 'party_update_submission_map' room.code player.id active_submission.id %}", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": document.querySelector("[name=csrfmiddlewaretoken]").value
+                    },
+                    body: JSON.stringify({ map: mapData })
+                }).then(function (response) {
+                    if (!response.ok) throw new Error("save failed");
+                    return response.json();
+                }).then(function (payload) {
+                    mapData = payload.map;
+                    drawEditor();
+                    status("Map saved.", "saved");
+                }).catch(function () {
+                    status("Map could not be saved.", "error");
+                });
+            }
+
+            document.querySelectorAll(".tile-tool").forEach(function (button) {
+                button.addEventListener("click", function () {
+                    selectedTile = Number(button.dataset.tile);
+                    document.querySelectorAll(".tile-tool").forEach(function (tool) {
+                        tool.classList.remove("selected");
+                    });
+                    button.classList.add("selected");
+                }, false);
+            });
+            canvas.addEventListener("mousedown", function (event) { isPainting = true; paint(event); }, false);
+            canvas.addEventListener("mousemove", function (event) { if (isPainting) paint(event); }, false);
+            window.addEventListener("mouseup", function () { isPainting = false; }, false);
+            canvas.addEventListener("touchstart", function (event) { event.preventDefault(); isPainting = true; paint(event.touches[0]); }, false);
+            canvas.addEventListener("touchmove", function (event) { event.preventDefault(); if (isPainting) paint(event.touches[0]); }, false);
+            canvas.addEventListener("touchend", function () { isPainting = false; }, false);
+            window.addEventListener("resize", resizeEditor, false);
+            resizeEditor();
+        {% endif %}
+    </script>
+</body>
+</html>

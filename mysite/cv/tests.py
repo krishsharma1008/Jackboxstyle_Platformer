@@ -156,7 +156,7 @@ class PartyModeTests(TestCase):
         self.assertEqual(response['Location'], f'/party/{room.code}/host')
         self.assertEqual(room.current_map, self.game_map)
 
-    def test_join_creates_player_and_controller_page_loads(self):
+    def test_join_creates_player_and_opens_setup_lobby(self):
         room = PartyRoom.objects.create(current_map=self.game_map)
 
         response = self.client.post(
@@ -167,11 +167,41 @@ class PartyModeTests(TestCase):
         player = PartyPlayer.objects.get(room=room)
         self.assertEqual(player.name, 'Krish')
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response['Location'], f'/party/{room.code}/controller/{player.id}')
+        self.assertEqual(response['Location'], f'/party/{room.code}/player/{player.id}/lobby')
 
+        response = self.client.get(f'/party/{room.code}/player/{player.id}/lobby/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Open Controller')
+
+    def test_controller_page_loads_after_setup(self):
+        room = PartyRoom.objects.create(current_map=self.game_map)
+        self.client.post(
+            f'/join/{room.code}/',
+            {'name': 'Krish', 'color': '#E53935'},
+        )
+        player = PartyPlayer.objects.get(room=room)
         response = self.client.get(f'/party/{room.code}/controller/{player.id}/')
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'aria-label="Jump"')
+        self.assertContains(response, 'Setup / Edit Map')
+
+    def test_player_can_update_profile_from_setup_lobby(self):
+        room = PartyRoom.objects.create(current_map=self.game_map)
+        self.client.post(
+            f'/join/{room.code}/',
+            {'name': 'Krish', 'color': '#E53935'},
+        )
+        player = PartyPlayer.objects.get(room=room)
+
+        response = self.client.post(
+            f'/party/{room.code}/player/{player.id}/profile/',
+            {'name': 'Nipun', 'color': '#1E88E5'},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        player.refresh_from_db()
+        self.assertEqual(player.name, 'Nipun')
+        self.assertEqual(player.color, '#1E88E5')
 
     def test_party_play_renders_host_canvas(self):
         room = PartyRoom.objects.create(current_map=self.game_map)
@@ -262,6 +292,71 @@ class PartyModeTests(TestCase):
         self.assertEqual(submission.game_map.title, 'Krish Map')
         room.refresh_from_db()
         self.assertEqual(room.current_map, submission.game_map)
+
+    @patch('cv.views.scan_image')
+    def test_setup_upload_returns_to_player_lobby(self, mock_scan_image):
+        mock_scan_image.return_value = json.dumps([[2] * 44 for _ in range(36)])
+        room = PartyRoom.objects.create(current_map=self.game_map)
+        self.client.post(
+            f'/join/{room.code}/',
+            {'name': 'Krish', 'color': '#E53935'},
+        )
+        player = PartyPlayer.objects.get(room=room)
+        upload = SimpleUploadedFile(
+            'party-map.jpg',
+            b'fake image bytes',
+            content_type='image/jpeg',
+        )
+
+        response = self.client.post(
+            f'/party/{room.code}/controller/{player.id}/upload/',
+            {'title': 'Krish Map', 'file': upload, 'next': 'setup'},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], f'/party/{room.code}/player/{player.id}/lobby')
+
+    def test_player_lobby_can_choose_which_submitted_map_to_edit(self):
+        room = PartyRoom.objects.create(current_map=self.game_map)
+        self.client.post(
+            f'/join/{room.code}/',
+            {'name': 'Krish', 'color': '#E53935'},
+        )
+        player = PartyPlayer.objects.get(room=room)
+        first_map = GameMap.objects.create(title='First Map', map=self.game_map.map)
+        second_map = GameMap.objects.create(title='Second Map', map=self.game_map.map)
+        first_submission = PartyMapSubmission.objects.create(room=room, player=player, game_map=first_map)
+        PartyMapSubmission.objects.create(room=room, player=player, game_map=second_map)
+
+        response = self.client.get(
+            f'/party/{room.code}/player/{player.id}/lobby/?submission={first_submission.id}'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['active_submission'], first_submission)
+        self.assertContains(response, 'Edit')
+        self.assertContains(response, 'Editing')
+
+    def test_player_can_edit_own_submitted_map(self):
+        room = PartyRoom.objects.create(current_map=self.game_map)
+        self.client.post(
+            f'/join/{room.code}/',
+            {'name': 'Krish', 'color': '#E53935'},
+        )
+        player = PartyPlayer.objects.get(room=room)
+        submission = PartyMapSubmission.objects.create(room=room, player=player, game_map=self.game_map)
+        edited_map = [[2] * 44] + [[2] + [1] * 42 + [2] for _ in range(34)] + [[2] * 44]
+        edited_map[10][10] = 9
+
+        response = self.client.post(
+            f'/party/{room.code}/player/{player.id}/submission/{submission.id}/map/',
+            data=json.dumps({'map': edited_map}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.game_map.refresh_from_db()
+        self.assertEqual(json.loads(self.game_map.map)[10][10], 9)
 
     def test_party_save_results_persists_round_and_updates_totals(self):
         room = PartyRoom.objects.create(current_map=self.game_map)
