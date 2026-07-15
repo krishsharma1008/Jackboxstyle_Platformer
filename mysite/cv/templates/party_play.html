@@ -7,7 +7,7 @@
     <link href="/static/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
     <link href="/static/css/party.css" rel="stylesheet">
 </head>
-<body class="party-play-body">
+<body class="party-play-body{% if big_canvas %} big-canvas{% endif %}">
     {{ game_map_data|json_script:"party-map-data" }}
     {{ players_data|json_script:"party-players-data" }}
     {{ leaderboard|json_script:"party-leaderboard-data" }}
@@ -17,6 +17,11 @@
         <div class="party-play-meta">
             <span class="party-pill">Timer <strong id="timer">0.0</strong>s</span>
             <span class="party-pill">Phones: /join/{{ room.code }}</span>
+            {% if big_canvas %}
+                <a class="party-button secondary topbar-button" href="{% url 'party_play' room.code %}">Show Tools</a>
+            {% else %}
+                <a class="party-button secondary topbar-button" href="{% url 'party_play' room.code %}?big=1">Big Canvas</a>
+            {% endif %}
         </div>
     </header>
 
@@ -108,6 +113,7 @@
         var initialPlayers = JSON.parse(document.getElementById("party-players-data").textContent);
         var leaderboardData = JSON.parse(document.getElementById("party-leaderboard-data").textContent);
         var canvas = document.getElementById("party-canvas");
+        var canvasStage = document.querySelector(".canvas-stage");
         var ctx = canvas.getContext("2d");
         var playersPanel = document.getElementById("players-panel");
         var leaderboardPanel = document.getElementById("leaderboard-panel");
@@ -130,8 +136,11 @@
         var saveTimer = null;
 
         function resizeCanvas() {
-            var maxWidth = Math.max(528, window.innerWidth - 360);
-            var maxHeight = Math.max(360, window.innerHeight - 100);
+            var stageRect = canvasStage.getBoundingClientRect();
+            var topbarHeight = document.querySelector(".party-play-topbar").offsetHeight;
+            var isBigCanvas = document.body.className.indexOf("big-canvas") !== -1;
+            var maxWidth = Math.max(528, stageRect.width - (isBigCanvas ? 2 : 4));
+            var maxHeight = Math.max(360, window.innerHeight - (isBigCanvas ? 16 : topbarHeight + 22));
             tileSize = Math.max(10, Math.floor(Math.min(maxWidth / mapData[0].length, maxHeight / mapData.length)));
             canvas.width = mapData[0].length * tileSize;
             canvas.height = mapData.length * tileSize;

@@ -485,5 +485,6 @@ def party_play(request, room_code):
             'available_maps': get_party_available_maps(room),
             'leaderboard': get_party_leaderboard(room),
             'round_id': round_id,
+            'big_canvas': request.GET.get('big') == '1',
         },
     )
