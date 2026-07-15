@@ -294,6 +294,46 @@ class PartyModeTests(TestCase):
         self.assertEqual(result.finish_ms, 12345)
         self.assertEqual(response.json()['leaderboard'][0]['total_score'], 827)
 
+    def test_party_update_map_saves_valid_editor_changes_and_locks_border(self):
+        room = PartyRoom.objects.create(current_map=self.game_map)
+        edited_map = [[1] * 44 for _ in range(36)]
+        edited_map[1][1] = 9
+
+        response = self.client.post(
+            f'/party/{room.code}/map/',
+            data=json.dumps({'map': edited_map}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.game_map.refresh_from_db()
+        saved_map = json.loads(self.game_map.map)
+        self.assertEqual(saved_map[1][1], 9)
+        self.assertTrue(all(tile == 2 for tile in saved_map[0]))
+        self.assertTrue(all(tile == 2 for tile in saved_map[-1]))
+        self.assertTrue(all(row[0] == 2 and row[-1] == 2 for row in saved_map))
+
+    def test_party_update_map_rejects_bad_shapes_and_tiles(self):
+        room = PartyRoom.objects.create(current_map=self.game_map)
+
+        response = self.client.post(
+            f'/party/{room.code}/map/',
+            data=json.dumps({'map': [[1]]}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        bad_tile_map = [[2] * 44] + [[2] + [1] * 42 + [2] for _ in range(34)] + [[2] * 44]
+        bad_tile_map[1][1] = 99
+        response = self.client.post(
+            f'/party/{room.code}/map/',
+            data=json.dumps({'map': bad_tile_map}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+
     def test_party_websocket_relays_player_input_to_host(self):
         room = PartyRoom.objects.create(current_map=self.game_map)
         player = PartyPlayer.objects.create(room=room, name='Krish', color='#E53935')

@@ -26,6 +26,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from scan import ScanError, scan_image  # noqa: E402
 
 
+PARTY_ALLOWED_TILE_IDS = {1, 2, 5, 8, 9, 12}
+PARTY_MAP_WIDTH = 44
+PARTY_MAP_HEIGHT = 36
+
+
 def scan_uploaded_file(uploaded_file):
     with tempfile.NamedTemporaryFile(suffix=Path(uploaded_file.name).suffix) as temp_file:
         for chunk in uploaded_file.chunks():
@@ -209,6 +214,30 @@ def get_party_leaderboard(room):
     ]
 
 
+def validate_party_map_data(map_data):
+    if not isinstance(map_data, list) or len(map_data) != PARTY_MAP_HEIGHT:
+        raise ValueError('Map must be 36 rows tall.')
+
+    cleaned = []
+    for row in map_data:
+        if not isinstance(row, list) or len(row) != PARTY_MAP_WIDTH:
+            raise ValueError('Map must be 44 columns wide.')
+        cleaned_row = []
+        for tile in row:
+            if tile not in PARTY_ALLOWED_TILE_IDS:
+                raise ValueError('Map contains an unsupported tile.')
+            cleaned_row.append(int(tile))
+        cleaned.append(cleaned_row)
+
+    for x in range(PARTY_MAP_WIDTH):
+        cleaned[0][x] = 2
+        cleaned[PARTY_MAP_HEIGHT - 1][x] = 2
+    for y in range(PARTY_MAP_HEIGHT):
+        cleaned[y][0] = 2
+        cleaned[y][PARTY_MAP_WIDTH - 1] = 2
+    return cleaned
+
+
 def party_new(request):
     game_map = get_default_party_map()
     room = PartyRoom.objects.create(current_map=game_map)
@@ -317,6 +346,24 @@ def party_save_results(request, room_code):
         room.save(update_fields=['status'])
 
     return JsonResponse({'leaderboard': get_party_leaderboard(room)})
+
+
+def party_update_map(request, room_code):
+    room = get_object_or_404(PartyRoom, code=room_code)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Requires POST'}, status=405)
+    if not room.current_map:
+        return JsonResponse({'error': 'No current map'}, status=400)
+
+    try:
+        payload = json.loads(request.body.decode('utf-8'))
+        map_data = validate_party_map_data(payload.get('map'))
+    except (json.JSONDecodeError, ValueError) as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+
+    room.current_map.map = json.dumps(map_data)
+    room.current_map.save(update_fields=['map'])
+    return JsonResponse({'ok': True, 'map': map_data})
 
 
 def party_join(request, room_code):

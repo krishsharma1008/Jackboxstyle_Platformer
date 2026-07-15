@@ -10,6 +10,7 @@ urlpatterns = static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT) + [
     re_path(r'^party/(?P<room_code>[A-Z0-9]{4,8})/choose-map/?$', views.party_choose_map, name='party_choose_map'),
     re_path(r'^party/(?P<room_code>[A-Z0-9]{4,8})/next-map/?$', views.party_next_map, name='party_next_map'),
     re_path(r'^party/(?P<room_code>[A-Z0-9]{4,8})/results/?$', views.party_save_results, name='party_save_results'),
+    re_path(r'^party/(?P<room_code>[A-Z0-9]{4,8})/map/?$', views.party_update_map, name='party_update_map'),
     re_path(r'^party/(?P<room_code>[A-Z0-9]{4,8})/play/?$', views.party_play, name='party_play'),
     re_path(r'^join/(?P<room_code>[A-Z0-9]{4,8})/?$', views.party_join, name='party_join'),
     re_path(r'^party/(?P<room_code>[A-Z0-9]{4,8})/controller/(?P<player_id>\d+)/?$', views.party_controller, name='party_controller'),

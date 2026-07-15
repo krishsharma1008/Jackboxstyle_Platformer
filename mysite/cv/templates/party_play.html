@@ -43,6 +43,24 @@
                 </select>
                 <button class="party-button primary" type="submit" {% if not available_maps %}disabled{% endif %}>Switch Map</button>
             </form>
+            <section class="map-editor">
+                <div class="map-editor-header">
+                    <div>
+                        <h2>Map Editor</h2>
+                        <p class="host-note">Toggle edit mode, pick a tile, then paint directly on the map.</p>
+                    </div>
+                    <button class="party-button secondary" id="edit-toggle" type="button">Edit Off</button>
+                </div>
+                <div class="tile-palette" id="tile-palette">
+                    <button class="tile-tool selected" type="button" data-tile="1" style="--tool-color: #FFFFFF"><span>Erase</span></button>
+                    <button class="tile-tool" type="button" data-tile="2" style="--tool-color: #000000"><span>Wall</span></button>
+                    <button class="tile-tool" type="button" data-tile="5" style="--tool-color: #FF79FF"><span>Bounce</span></button>
+                    <button class="tile-tool" type="button" data-tile="8" style="--tool-color: #0000FF"><span>Finish</span></button>
+                    <button class="tile-tool" type="button" data-tile="9" style="--tool-color: #FD5F00"><span>Lava</span></button>
+                    <button class="tile-tool" type="button" data-tile="12" style="--tool-color: #008000"><span>Coin</span></button>
+                </div>
+                <p class="editor-status" id="editor-status">Editing is off.</p>
+            </section>
             <div class="party-actions">
                 <a class="party-button secondary" href="{% url 'party_host' room.code %}">Lobby</a>
                 <button class="party-button primary" id="restart">Restart</button>
@@ -96,6 +114,8 @@
         var timerEl = document.getElementById("timer");
         var resultsEl = document.getElementById("results");
         var resultsList = document.getElementById("results-list");
+        var editToggle = document.getElementById("edit-toggle");
+        var editorStatus = document.getElementById("editor-status");
         var socketProtocol = window.location.protocol === "https:" ? "wss" : "ws";
         var socket = new WebSocket(socketProtocol + "://" + window.location.host + "/ws/party/" + roomCode + "/");
         var players = {};
@@ -104,6 +124,10 @@
         var roundComplete = false;
         var tileSize = 16;
         var spawn = { x: 2.5, y: 2.5 };
+        var editMode = false;
+        var selectedTile = tileIds.background;
+        var isPainting = false;
+        var saveTimer = null;
 
         function resizeCanvas() {
             var maxWidth = Math.max(528, window.innerWidth - 360);
@@ -123,6 +147,17 @@
             var row = mapData[y];
             if (!row) return tileIds.wall;
             return row[x] || tileIds.wall;
+        }
+
+        function enforceBorderWalls() {
+            for (var x = 0; x < mapData[0].length; x++) {
+                mapData[0][x] = tileIds.wall;
+                mapData[mapData.length - 1][x] = tileIds.wall;
+            }
+            for (var y = 0; y < mapData.length; y++) {
+                mapData[y][0] = tileIds.wall;
+                mapData[y][mapData[y].length - 1] = tileIds.wall;
+            }
         }
 
         function addOrUpdatePlayer(player) {
@@ -311,6 +346,26 @@
             });
         }
 
+        function drawEditorGrid() {
+            if (!editMode) return;
+            ctx.save();
+            ctx.strokeStyle = "rgba(45, 140, 255, 0.28)";
+            ctx.lineWidth = 1;
+            for (var x = 0; x <= mapData[0].length; x++) {
+                ctx.beginPath();
+                ctx.moveTo(x * tileSize + 0.5, 0);
+                ctx.lineTo(x * tileSize + 0.5, canvas.height);
+                ctx.stroke();
+            }
+            for (var y = 0; y <= mapData.length; y++) {
+                ctx.beginPath();
+                ctx.moveTo(0, y * tileSize + 0.5);
+                ctx.lineTo(canvas.width, y * tileSize + 0.5);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
         function renderPanel() {
             timerEl.textContent = ((performance.now() - roundStartedAt) / 1000).toFixed(1);
             playersPanel.innerHTML = "";
@@ -457,7 +512,60 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             drawMap();
             drawPlayers();
+            drawEditorGrid();
             renderPanel();
+        }
+
+        function setEditorStatus(text, state) {
+            editorStatus.textContent = text;
+            editorStatus.className = "editor-status" + (state ? " " + state : "");
+        }
+
+        function canvasTileFromEvent(event) {
+            var rect = canvas.getBoundingClientRect();
+            var x = Math.floor(((event.clientX - rect.left) / rect.width) * mapData[0].length);
+            var y = Math.floor(((event.clientY - rect.top) / rect.height) * mapData.length);
+            return { x: x, y: y };
+        }
+
+        function paintTile(event) {
+            if (!editMode) return;
+            if (event.preventDefault) event.preventDefault();
+            var point = canvasTileFromEvent(event);
+            if (point.x <= 0 || point.y <= 0 || point.x >= mapData[0].length - 1 || point.y >= mapData.length - 1) {
+                setEditorStatus("Border stays locked as wall.", "warning");
+                return;
+            }
+            if (!mapData[point.y] || mapData[point.y][point.x] === selectedTile) return;
+            mapData[point.y][point.x] = selectedTile;
+            scheduleMapSave();
+        }
+
+        function saveMap() {
+            enforceBorderWalls();
+            setEditorStatus("Saving map...", "saving");
+            return fetch("{% url 'party_update_map' room.code %}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify({ map: mapData })
+            }).then(function (response) {
+                if (!response.ok) throw new Error("Map save failed");
+                return response.json();
+            }).then(function (payload) {
+                mapData = payload.map;
+                setEditorStatus("Map saved.", "saved");
+            }).catch(function () {
+                setEditorStatus("Map could not be saved.", "error");
+            });
+        }
+
+        function scheduleMapSave() {
+            setEditorStatus("Unsaved edit...", "saving");
+            if (saveTimer) window.clearTimeout(saveTimer);
+            saveTimer = window.setTimeout(saveMap, 450);
         }
 
         var lastFrame = performance.now();
@@ -510,6 +618,44 @@
         window.addEventListener("resize", resizeCanvas, false);
         document.getElementById("restart").addEventListener("click", restartRound, false);
         document.getElementById("play-again").addEventListener("click", restartRound, false);
+        editToggle.addEventListener("click", function () {
+            editMode = !editMode;
+            editToggle.textContent = editMode ? "Edit On" : "Edit Off";
+            editToggle.classList.toggle("success", editMode);
+            canvas.classList.toggle("editing", editMode);
+            setEditorStatus(editMode ? "Editing is on. Paint the canvas." : "Editing is off.", editMode ? "saved" : "");
+        }, false);
+        document.querySelectorAll(".tile-tool").forEach(function (button) {
+            button.addEventListener("click", function () {
+                selectedTile = Number(button.dataset.tile);
+                document.querySelectorAll(".tile-tool").forEach(function (tool) {
+                    tool.classList.remove("selected");
+                });
+                button.classList.add("selected");
+            }, false);
+        });
+        canvas.addEventListener("mousedown", function (event) {
+            isPainting = true;
+            paintTile(event);
+        }, false);
+        canvas.addEventListener("mousemove", function (event) {
+            if (isPainting) paintTile(event);
+        }, false);
+        window.addEventListener("mouseup", function () {
+            isPainting = false;
+        }, false);
+        canvas.addEventListener("touchstart", function (event) {
+            event.preventDefault();
+            isPainting = true;
+            paintTile(event.touches[0]);
+        }, false);
+        canvas.addEventListener("touchmove", function (event) {
+            event.preventDefault();
+            if (isPainting) paintTile(event.touches[0]);
+        }, false);
+        canvas.addEventListener("touchend", function () {
+            isPainting = false;
+        }, false);
 
         window.addEventListener("keydown", function (event) {
             var firstPlayer = players[playerOrder[0]];
