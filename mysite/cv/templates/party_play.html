@@ -240,15 +240,47 @@
         }
 
         function collides(player) {
-            var radius = 0.34;
-            var checks = [
+            return playerSampleTiles(player).some(function (point) {
+                return isSolidTile(point.x, point.y);
+            });
+        }
+
+        function playerSampleTiles(player) {
+            var radius = 0.38;
+            var points = [
                 [player.x - radius, player.y - radius],
                 [player.x + radius, player.y - radius],
                 [player.x - radius, player.y + radius],
-                [player.x + radius, player.y + radius]
+                [player.x + radius, player.y + radius],
+                [player.x, player.y]
             ];
-            return checks.some(function (point) {
-                return isSolidTile(Math.floor(point[0]), Math.floor(point[1]));
+            var seen = {};
+            return points.map(function (point) {
+                return {
+                    x: Math.floor(point[0]),
+                    y: Math.floor(point[1])
+                };
+            }).filter(function (point) {
+                var key = point.x + "," + point.y;
+                if (seen[key]) return false;
+                seen[key] = true;
+                return true;
+            });
+        }
+
+        function touchesTile(player, tileId) {
+            return playerSampleTiles(player).some(function (point) {
+                return tileAt(point.x, point.y) === tileId;
+            });
+        }
+
+        function collectCoins(player) {
+            playerSampleTiles(player).forEach(function (point) {
+                if (tileAt(point.x, point.y) !== tileIds.coin) return;
+                var coinKey = point.x + "," + point.y;
+                if (player.collectedCoins[coinKey]) return;
+                player.collectedCoins[coinKey] = true;
+                player.coins += 1;
             });
         }
 
@@ -288,22 +320,13 @@
 
             player.vx *= player.onGround ? 0.9 : 0.97;
 
-            var currentTileX = Math.floor(player.x);
-            var currentTileY = Math.floor(player.y);
-            var currentTile = tileAt(currentTileX, currentTileY);
-            if (currentTile === tileIds.lava) {
+            if (touchesTile(player, tileIds.lava)) {
                 player.deaths += 1;
                 resetPlayer(player);
                 return;
             }
-            if (currentTile === tileIds.coin) {
-                var coinKey = currentTileX + "," + currentTileY;
-                if (!player.collectedCoins[coinKey]) {
-                    player.collectedCoins[coinKey] = true;
-                    player.coins += 1;
-                }
-            }
-            if (currentTile === tileIds.finish) {
+            collectCoins(player);
+            if (touchesTile(player, tileIds.finish)) {
                 player.finished = true;
                 player.finishMs = performance.now() - roundStartedAt;
             }
