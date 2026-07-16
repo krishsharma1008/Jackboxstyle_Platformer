@@ -226,6 +226,8 @@ class PartyModeTests(TestCase):
         self.assertContains(response, 'coins are bonus points only')
         self.assertContains(response, 'function collectCoins(player)')
         self.assertContains(response, 'touchesTile(player, tileIds.finish)')
+        self.assertContains(response, 'function renderLiveLeaderboard()')
+        self.assertContains(response, 'function liveTotalFor(player)')
 
     def test_party_play_repairs_invalid_current_map_json(self):
         broken_map = GameMap.objects.create(title='broken', map='')

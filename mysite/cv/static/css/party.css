@@ -896,6 +896,19 @@ body.party-screen::after,
     padding: 10px 12px;
 }
 
+.leaderboard-row.live span {
+    display: grid;
+    gap: 2px;
+}
+
+.leaderboard-row.live small {
+    color: var(--party-lime);
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
 .map-editor {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);

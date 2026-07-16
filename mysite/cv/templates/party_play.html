@@ -134,6 +134,7 @@
         var selectedTile = tileIds.background;
         var isPainting = false;
         var saveTimer = null;
+        var roundScoresSaved = false;
 
         function resizeCanvas() {
             var stageRect = canvasStage.getBoundingClientRect();
@@ -209,6 +210,7 @@
         function restartRound() {
             roundStartedAt = performance.now();
             roundComplete = false;
+            roundScoresSaved = false;
             roundAttempt += 1;
             currentRoundId = roundIdBase + "-" + roundAttempt;
             resultsEl.classList.remove("visible");
@@ -246,26 +248,23 @@
         }
 
         function playerSampleTiles(player) {
-            var radius = 0.38;
-            var points = [
-                [player.x - radius, player.y - radius],
-                [player.x + radius, player.y - radius],
-                [player.x - radius, player.y + radius],
-                [player.x + radius, player.y + radius],
-                [player.x, player.y]
-            ];
+            var radius = 0.58;
             var seen = {};
-            return points.map(function (point) {
-                return {
-                    x: Math.floor(point[0]),
-                    y: Math.floor(point[1])
-                };
-            }).filter(function (point) {
-                var key = point.x + "," + point.y;
-                if (seen[key]) return false;
-                seen[key] = true;
-                return true;
-            });
+            var tiles = [];
+            for (var y = Math.floor(player.y - radius); y <= Math.floor(player.y + radius); y++) {
+                for (var x = Math.floor(player.x - radius); x <= Math.floor(player.x + radius); x++) {
+                    var nearestX = Math.max(x, Math.min(player.x, x + 1));
+                    var nearestY = Math.max(y, Math.min(player.y, y + 1));
+                    var dx = player.x - nearestX;
+                    var dy = player.y - nearestY;
+                    var key = x + "," + y;
+                    if (!seen[key] && dx * dx + dy * dy <= radius * radius) {
+                        seen[key] = true;
+                        tiles.push({ x: x, y: y });
+                    }
+                }
+            }
+            return tiles;
         }
 
         function touchesTile(player, tileId) {
@@ -410,7 +409,7 @@
                     '<strong>' + player.name + '</strong>' +
                     '<span class="' + (player.finished ? 'finished' : 'waiting') + '">' +
                     (player.finished ? 'done' : 'playing') + '</span>' +
-                    '<small>Coins ' + player.coins + ' | Deaths ' + player.deaths + ' | Total ' + player.totalScore + '</small>';
+                    '<small>Coins ' + player.coins + ' | Deaths ' + player.deaths + ' | Round +' + scoreFor(player) + ' | Live ' + liveTotalFor(player) + '</small>';
                 playersPanel.appendChild(row);
             });
         }
@@ -432,9 +431,38 @@
             });
         }
 
+        function renderLiveLeaderboard() {
+            var rows = playerOrder.map(function (id) {
+                var player = players[id];
+                return {
+                    player: player,
+                    roundScore: roundScoresSaved ? 0 : scoreFor(player),
+                    liveTotal: liveTotalFor(player)
+                };
+            }).sort(function (a, b) {
+                return b.liveTotal - a.liveTotal;
+            });
+
+            leaderboardPanel.innerHTML = "";
+            rows.forEach(function (row, index) {
+                var player = row.player;
+                var item = document.createElement("div");
+                item.className = "leaderboard-row live";
+                item.innerHTML =
+                    '<strong>' + (index + 1) + '</strong>' +
+                    '<span><span class="dot" style="background:' + player.color + '"></span> ' + player.name + '<small>Round +' + row.roundScore + '</small></span>' +
+                    '<strong>' + row.liveTotal + '</strong>';
+                leaderboardPanel.appendChild(item);
+            });
+        }
+
         function scoreFor(player) {
             if (!player.finished) return Math.max(0, player.coins * 50 - player.deaths * 100);
             return Math.max(0, Math.round(1000 - (player.finishMs / 1000) * 10 - player.deaths * 100 + player.coins * 50));
+        }
+
+        function liveTotalFor(player) {
+            return (player.totalScore || 0) + (roundScoresSaved ? 0 : scoreFor(player));
         }
 
         function resultRows() {
@@ -515,6 +543,7 @@
             launchConfetti();
             saveRoundResults(rows)
                 .then(function (data) {
+                    roundScoresSaved = true;
                     leaderboardData = data.leaderboard || leaderboardData;
                     renderLeaderboard(leaderboardData);
                     renderResults(rows, "Scores saved. Pick Next Map when everyone is ready.");
@@ -546,6 +575,7 @@
             drawPlayers();
             drawEditorGrid();
             renderPanel();
+            renderLiveLeaderboard();
         }
 
         function setEditorStatus(text, state) {
