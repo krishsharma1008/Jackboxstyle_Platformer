@@ -723,9 +723,12 @@ body.party-screen::after,
         url("/static/img/party-mode-bg.png") center / cover fixed,
         #08090d;
     color: #fff;
+    display: grid;
     font-family: Arial, Helvetica, sans-serif;
     margin: 0;
+    min-height: 100vh;
     overflow: hidden;
+    grid-template-rows: auto minmax(0, 1fr);
 }
 
 .party-play-topbar {
@@ -768,7 +771,7 @@ body.party-screen::after,
     display: grid;
     gap: 10px;
     grid-template-columns: minmax(0, 1fr) 300px;
-    height: calc(100vh - 58px);
+    min-height: 0;
     padding: 10px;
 }
 
@@ -1033,12 +1036,24 @@ body.party-screen::after,
     }
 
     .party-play-body {
+        display: block;
         overflow: auto;
     }
 
     .party-play-topbar {
         align-items: flex-start;
         flex-direction: column;
+    }
+
+    .party-layout {
+        display: flex;
+        flex-direction: column;
+        min-height: auto;
+    }
+
+    .canvas-stage {
+        align-items: flex-start;
+        min-height: auto;
     }
 
     .party-play-meta {
