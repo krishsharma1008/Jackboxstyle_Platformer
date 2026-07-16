@@ -66,6 +66,7 @@ def game(request, map_name):
         high_score_string = game_obj.high_score
         if game_obj.high_score == 9999:
             high_score_string = 'Level never beaten!'
+        game_obj.map = get_map_json_or_fallback(game_obj)
         return render(request, 'play.html', {'map': game_obj, 'high_score': high_score_string})
     return HttpResponse('<h1> Game Page Does Not Exist With Name: </h1>' + map_name)
 
@@ -238,6 +239,45 @@ def validate_party_map_data(map_data):
     return cleaned
 
 
+def build_fallback_map_data():
+    map_data = [[1 for _ in range(PARTY_MAP_WIDTH)] for _ in range(PARTY_MAP_HEIGHT)]
+    for x in range(PARTY_MAP_WIDTH):
+        map_data[0][x] = 2
+        map_data[PARTY_MAP_HEIGHT - 1][x] = 2
+        map_data[PARTY_MAP_HEIGHT - 3][x] = 2
+    for y in range(PARTY_MAP_HEIGHT):
+        map_data[y][0] = 2
+        map_data[y][PARTY_MAP_WIDTH - 1] = 2
+    map_data[PARTY_MAP_HEIGHT - 4][PARTY_MAP_WIDTH - 5] = 8
+    map_data[PARTY_MAP_HEIGHT - 4][PARTY_MAP_WIDTH // 2] = 12
+    return map_data
+
+
+def get_map_json_or_fallback(game_map):
+    try:
+        map_data = json.loads(game_map.map or '')
+        if isinstance(map_data, list):
+            return game_map.map
+    except (TypeError, json.JSONDecodeError):
+        pass
+    return json.dumps(build_fallback_map_data())
+
+
+def get_party_map_data_or_fallback(game_map, repair=False):
+    try:
+        map_data = json.loads(game_map.map or '')
+        cleaned_map = validate_party_map_data(map_data)
+    except (TypeError, json.JSONDecodeError, ValueError):
+        cleaned_map = build_fallback_map_data()
+
+    if repair and game_map:
+        repaired_json = json.dumps(cleaned_map)
+        if game_map.map != repaired_json:
+            game_map.map = repaired_json
+            game_map.save(update_fields=['map'])
+    return cleaned_map
+
+
 def party_new(request):
     game_map = get_default_party_map()
     room = PartyRoom.objects.create(current_map=game_map)
@@ -407,7 +447,11 @@ def party_player_lobby(request, room_code, player_id):
         active_submission = submissions.filter(id=requested_submission_id).first()
     if not active_submission:
         active_submission = submissions.last()
-    active_map_data = json.loads(active_submission.game_map.map) if active_submission else []
+    active_map_data = (
+        get_party_map_data_or_fallback(active_submission.game_map, repair=True)
+        if active_submission
+        else []
+    )
     return render(
         request,
         'party_player_lobby.html',
@@ -529,7 +573,7 @@ def party_play(request, room_code):
     room.save(update_fields=['current_map', 'status', 'current_round_started_at'])
     round_id = f'{room.code}-{room.current_map_id}-{room.current_round_started_at.timestamp():.6f}'
 
-    game_map_data = json.loads(room.current_map.map)
+    game_map_data = get_party_map_data_or_fallback(room.current_map, repair=True)
     players = [
         {
             'id': player.id,

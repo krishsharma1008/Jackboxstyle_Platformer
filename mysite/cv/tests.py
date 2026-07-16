@@ -90,6 +90,14 @@ class WebFlowTests(TestCase):
         self.assertNotContains(response, 'You have not finished yet')
         self.assertNotContains(response, 'more coins to win')
 
+    def test_play_page_uses_fallback_for_invalid_saved_map_json(self):
+        GameMap.objects.create(title='brokenlevel', map='')
+
+        response = self.client.get('/play/brokenlevel/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data: [[2, 2, 2')
+
     def test_high_score_only_updates_when_score_is_lower(self):
         game_map = GameMap.objects.create(
             title='testlevel',
@@ -217,6 +225,20 @@ class PartyModeTests(TestCase):
         self.assertContains(response, 'Krish')
         self.assertContains(response, 'coins are bonus points only')
 
+    def test_party_play_repairs_invalid_current_map_json(self):
+        broken_map = GameMap.objects.create(title='broken', map='')
+        room = PartyRoom.objects.create(current_map=broken_map)
+        PartyPlayer.objects.create(room=room, name='Krish', color='#E53935')
+
+        response = self.client.get(f'/party/{room.code}/play/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'party-canvas')
+        broken_map.refresh_from_db()
+        repaired_map = json.loads(broken_map.map)
+        self.assertEqual(len(repaired_map), 36)
+        self.assertTrue(all(len(row) == 44 for row in repaired_map))
+
     def test_party_host_can_choose_from_available_maps(self):
         alternate_map = GameMap.objects.create(
             title='alternate',
@@ -340,6 +362,23 @@ class PartyModeTests(TestCase):
         self.assertEqual(response.context['active_submission'], first_submission)
         self.assertContains(response, 'Edit')
         self.assertContains(response, 'Editing')
+
+    def test_player_lobby_repairs_invalid_submitted_map_json(self):
+        broken_map = GameMap.objects.create(title='Broken Map', map='')
+        room = PartyRoom.objects.create(current_map=self.game_map)
+        self.client.post(
+            f'/join/{room.code}/',
+            {'name': 'Krish', 'color': '#E53935'},
+        )
+        player = PartyPlayer.objects.get(room=room)
+        PartyMapSubmission.objects.create(room=room, player=player, game_map=broken_map)
+
+        response = self.client.get(f'/party/{room.code}/player/{player.id}/lobby/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Repair Map')
+        broken_map.refresh_from_db()
+        self.assertEqual(len(json.loads(broken_map.map)), 36)
 
     def test_player_can_edit_own_submitted_map(self):
         room = PartyRoom.objects.create(current_map=self.game_map)
